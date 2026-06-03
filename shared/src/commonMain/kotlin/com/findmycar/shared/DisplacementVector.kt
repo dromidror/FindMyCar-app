@@ -3,6 +3,7 @@ package com.findmycar.shared
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sqrt
+import kotlin.math.PI
 
 /**
  * 2D displacement in meters using NED (North-East-Down) frame.
@@ -20,7 +21,7 @@ data class DisplacementVector(
     /** Bearing in degrees (0=North, 90=East, 180=South, 270=West) */
     val bearingDeg: Float get() {
         val rad = atan2(dEast.toDouble(), dNorth.toDouble())
-        val deg = Math.toDegrees(rad).toFloat()
+        val deg = (rad * 180.0 / PI).toFloat()
         return (deg + 360f) % 360f
     }
 
@@ -50,7 +51,7 @@ data class LatLng(val lat: Double, val lng: Double) {
 
         /** Meters per degree of longitude at a given latitude */
         fun metersPerDegLng(lat: Double): Double =
-            METERS_PER_DEG_LAT * cos(Math.toRadians(lat))
+            METERS_PER_DEG_LAT * cos(lat * PI / 180.0)
     }
 
     /**
