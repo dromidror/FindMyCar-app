@@ -1,12 +1,16 @@
 package com.findmycar.app
 
+import android.Manifest
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.findmycar.shared.ParkingSpot
 import com.google.android.material.button.MaterialButton
 import java.text.SimpleDateFormat
@@ -15,17 +19,18 @@ import java.util.Locale
 
 /**
  * Main screen of FindMyCar app.
- *
- * Shows:
- * - Current state (driving / parked)
- * - "Find My Car" button when parked
- * - Parking time info
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var stateText: TextView
     private lateinit var parkInfoText: TextView
     private lateinit var findButton: MaterialButton
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) ExitDetectionService.start(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,8 +44,13 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, FindMyCarActivity::class.java))
         }
 
-        // Start the exit detection service
-        ExitDetectionService.start(this)
+        // Request location permission, then start service
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED) {
+            ExitDetectionService.start(this)
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
     }
 
     override fun onResume() {

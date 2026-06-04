@@ -44,16 +44,26 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
 
     private val navEngine = NavigationEngine()
     private val handler = Handler(Looper.getMainLooper())
+    private val stepDR = com.findmycar.shared.StepDeadReckoning()
 
     private var deviceHeadingDeg = 0f
     private var currentGps: LatLng? = null
+    private var lastGpsLatLng: LatLng? = null
     private var parkingGps: LatLng? = null
     private var pathAccumulator = PathAccumulator()
+    private var lastGpsTimeMs = 0L
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val loc = result.lastLocation ?: return
             currentGps = LatLng(loc.latitude, loc.longitude)
+            lastGpsLatLng = currentGps
+            lastGpsTimeMs = System.currentTimeMillis()
+
+            // If path accumulator was running (no GPS), stop it — GPS is back
+            if (pathAccumulator.isActive) {
+                pathAccumulator.stopAndEmit() // displacement no longer needed for navigation since GPS is here
+            }
         }
     }
 
@@ -96,6 +106,11 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
 
+        // Step counter (for dead reckoning when no GPS)
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+
         // GPS
         try {
             val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L).build()
@@ -107,11 +122,15 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun updateNavigation() {
+        val accFromParking = if (pathAccumulator.isActive) pathAccumulator.currentTotal() else null
+        val accFromLastGps = if (pathAccumulator.isActive && lastGpsLatLng != null) pathAccumulator.currentTotal() else null
+
         val result = navEngine.compute(
             parkingGps = parkingGps,
             currentGps = currentGps,
-            accumulatedFromParking = pathAccumulator.currentTotal().takeIf { pathAccumulator.isActive },
-            accumulatedFromLastGps = null
+            accumulatedFromParking = accFromParking,
+            accumulatedFromLastGps = accFromLastGps,
+            lastGpsBeforeLoss = lastGpsLatLng
         )
 
         if (result.arrived) {
@@ -134,23 +153,47 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
-        val rotationMatrix = FloatArray(9)
-        val orientation = FloatArray(3)
-        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        SensorManager.getOrientation(rotationMatrix, orientation)
-        deviceHeadingDeg = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0).toFloat()
+    private fun updateArrowRotation() {
+        val accFromParking = if (pathAccumulator.isActive) pathAccumulator.currentTotal() else null
+        val accFromLastGps = if (pathAccumulator.isActive && lastGpsLatLng != null) pathAccumulator.currentTotal() else null
 
-        // Update arrow rotation at sensor rate (smooth)
         val result = navEngine.compute(
             parkingGps = parkingGps,
             currentGps = currentGps,
-            accumulatedFromParking = pathAccumulator.currentTotal().takeIf { pathAccumulator.isActive },
-            accumulatedFromLastGps = null
+            accumulatedFromParking = accFromParking,
+            accumulatedFromLastGps = accFromLastGps,
+            lastGpsBeforeLoss = lastGpsLatLng
         )
         if (!result.arrived) {
             arrowView.rotation = result.bearingToCarDeg - deviceHeadingDeg
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_ROTATION_VECTOR -> {
+                val rotationMatrix = FloatArray(9)
+                val orientation = FloatArray(3)
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                SensorManager.getOrientation(rotationMatrix, orientation)
+                deviceHeadingDeg = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0).toFloat()
+                stepDR.updateHeading(deviceHeadingDeg)
+
+                // Smooth arrow rotation at sensor rate
+                updateArrowRotation()
+            }
+            Sensor.TYPE_STEP_COUNTER -> {
+                val steps = event.values[0].toInt()
+                // If no GPS, accumulate displacement from steps
+                val gpsStale = (System.currentTimeMillis() - lastGpsTimeMs) > 10_000L
+                if (gpsStale) {
+                    if (!pathAccumulator.isActive) pathAccumulator.start()
+                    val displacement = stepDR.onStepCount(steps)
+                    if (displacement.magnitude > 0f) {
+                        pathAccumulator.addDisplacement(displacement)
+                    }
+                }
+            }
         }
     }
 
