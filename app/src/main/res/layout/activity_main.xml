@@ -29,6 +29,20 @@
         android:layout_marginTop="8dp"
         android:visibility="gone" />
 
+    <!-- Debug indicators -->
+    <TextView
+        android:id="@+id/debugIndicators"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:textColor="#AAAAAA"
+        android:gravity="start"
+        android:layout_marginTop="16dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp" />
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/findButton"
         android:layout_width="wrap_content"
@@ -66,5 +80,14 @@
         app:backgroundTint="#9C27B0"
         android:textColor="#FFFFFF"
         style="@style/Widget.Material3.Button" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/clearLogsButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Clear Logs"
+        android:textSize="12sp"
+        android:layout_marginTop="12dp"
+        style="@style/Widget.Material3.Button.TextButton" />
 
 </LinearLayout>

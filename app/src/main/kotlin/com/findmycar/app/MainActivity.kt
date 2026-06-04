@@ -16,6 +16,7 @@ import com.google.android.material.button.MaterialButton
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Main screen of FindMyCar app.
@@ -24,10 +25,12 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var stateText: TextView
     private lateinit var parkInfoText: TextView
+    private lateinit var debugIndicators: TextView
     private lateinit var findButton: MaterialButton
     private lateinit var testLogButton: MaterialButton
     private lateinit var carExitButton: MaterialButton
     private var logging = false
+    private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -35,12 +38,17 @@ class MainActivity : AppCompatActivity() {
         if (granted) ExitDetectionService.start(this)
     }
 
+    private val requestActivityRecognition = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* Step counter will work if granted */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         stateText = findViewById(R.id.stateText)
         parkInfoText = findViewById(R.id.parkInfoText)
+        debugIndicators = findViewById(R.id.debugIndicators)
         findButton = findViewById(R.id.findButton)
         testLogButton = findViewById(R.id.testLogButton)
         carExitButton = findViewById(R.id.carExitButton)
@@ -51,6 +59,7 @@ class MainActivity : AppCompatActivity() {
 
         testLogButton.setOnClickListener { toggleLogging() }
         carExitButton.setOnClickListener { markCarExit() }
+        findViewById<MaterialButton>(R.id.clearLogsButton).setOnClickListener { clearLogs() }
 
         // Request location permission, then start service
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -59,11 +68,32 @@ class MainActivity : AppCompatActivity() {
         } else {
             requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+
+        // Request activity recognition (step counter needs this on Android 10+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+            != PackageManager.PERMISSION_GRANTED) {
+            requestActivityRecognition.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         updateDisplay()
+        refreshHandler.post(refreshRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        refreshHandler.removeCallbacks(refreshRunnable)
+    }
+
+    private val refreshRunnable = object : Runnable {
+        override fun run() {
+            updateDisplay()
+            updateDebugIndicators()
+            refreshHandler.postDelayed(this, 2000L)
+        }
     }
 
     private fun updateDisplay() {
@@ -85,12 +115,25 @@ class MainActivity : AppCompatActivity() {
                 if (parkingTimestamp > 0) {
                     val elapsed = System.currentTimeMillis() - parkingTimestamp
                     val minutes = elapsed / 60_000
-                    parkInfoText.text = if (minutes < 60) {
+                    val timeStr = if (minutes < 60) {
                         "Parked ${minutes} min ago"
                     } else {
                         val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(parkingTimestamp))
                         "Parked at $time"
                     }
+                    val hasFloor = parkingPrefs.getBoolean("has_floor", false)
+                    val parkingPressure = parkingPrefs.getFloat("parking_pressure", 0f)
+                    val currentPressure = statePrefs.getFloat("debug_pressure", 0f)
+
+                    val floorStr = if (hasFloor && parkingPressure > 0f && currentPressure > 0f) {
+                        val delta = parkingPressure - currentPressure
+                        val floorsBelow = (delta / 0.4f).roundToInt()
+                        com.findmycar.shared.formatFloorRelative(floorsBelow)
+                    } else {
+                        val floor = if (hasFloor) parkingPrefs.getInt("floor", 0) else null
+                        com.findmycar.shared.formatFloor(floor)
+                    }
+                    parkInfoText.text = if (floorStr != null) "$timeStr\n$floorStr" else timeStr
                     parkInfoText.visibility = View.VISIBLE
                 }
                 findButton.visibility = View.VISIBLE
@@ -101,6 +144,32 @@ class MainActivity : AppCompatActivity() {
                 parkInfoText.visibility = View.GONE
                 findButton.visibility = View.GONE
             }
+        }
+    }
+
+    private fun updateDebugIndicators() {
+        val statePrefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
+        val motionState = statePrefs.getString("debug_motion_state", "?") ?: "?"
+        val gpsSpeed = statePrefs.getFloat("debug_gps_speed", 0f)
+        val gpsAvailable = statePrefs.getBoolean("debug_gps_available", false)
+        val charging = statePrefs.getBoolean("debug_charging", false)
+        val btConnected = statePrefs.getBoolean("debug_bt_connected", false)
+        val steps = statePrefs.getInt("debug_steps_since_stop", 0)
+        val presenceState = statePrefs.getString("presence_state", "UNKNOWN") ?: "UNKNOWN"
+
+        val gpsIcon = if (gpsAvailable) "🟢" else "🔴"
+        val motionIcon = if (motionState == "CAR_MOVING") "🟢" else "🔴"
+        val chargeIcon = if (charging) "🟢" else "⚪"
+        val btIcon = if (btConnected) "🟢" else "⚪"
+        val stepsIcon = if (steps > 0) "🟢 $steps" else "⚪ 0"
+
+        debugIndicators.text = buildString {
+            append("GPS:     $gpsIcon ${if (gpsAvailable) "${"%.1f".format(gpsSpeed)} km/h" else "no fix"}\n")
+            append("Motion:  $motionIcon $motionState\n")
+            append("Charge:  $chargeIcon ${if (charging) "car charger" else "off"}\n")
+            append("Car BT:  $btIcon ${if (btConnected) "connected" else "off"}\n")
+            append("Steps:   $stepsIcon\n")
+            append("State:   $presenceState")
         }
     }
 
@@ -123,5 +192,12 @@ class MainActivity : AppCompatActivity() {
         }
         sendBroadcast(intent)
         android.widget.Toast.makeText(this, "Car Exit marked ✓", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearLogs() {
+        val logDir = java.io.File(getExternalFilesDir(null) ?: filesDir, "test_logs")
+        var count = 0
+        logDir.listFiles()?.forEach { it.delete(); count++ }
+        android.widget.Toast.makeText(this, "Cleared $count log file(s)", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
