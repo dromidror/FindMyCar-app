@@ -147,10 +147,40 @@ class ExitDetectionService : Service(), SensorEventListener {
         private const val GPS_STALE_MS = 10_000L  // GPS considered unavailable after 10s without fix
         private const val SPEED_STOPPED_THRESHOLD_KMH = 1.0f
 
+        const val ACTION_TOGGLE_LOGGING = "com.findmycar.app.TOGGLE_LOGGING"
+        const val ACTION_USER_CAR_EXIT = "com.findmycar.app.USER_CAR_EXIT"
+
         fun start(context: Context) {
             ContextCompat.startForegroundService(
                 context, Intent(context, ExitDetectionService::class.java)
             )
+        }
+    }
+
+    private val loggingReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            when (intent.action) {
+                ACTION_TOGGLE_LOGGING -> {
+                    val enabled = intent.getBooleanExtra("enabled", false)
+                    if (enabled) testLogger?.start() else testLogger?.stop()
+                }
+                ACTION_USER_CAR_EXIT -> {
+                    // Log a special marker row indicating user manually pressed "Car Exit"
+                    val loc = lastGpsLocation
+                    testLogger?.log(
+                        lat = loc?.latitude,
+                        lng = loc?.longitude,
+                        gpsSpeedKmh = if (hasRecentGps()) gpsSpeedKmh else null,
+                        gpsAccuracy = loc?.accuracy,
+                        roninDNorth = 0f, roninDEast = 0f,
+                        roninTotalNorth = pathAccumulator.totalNorth,
+                        roninTotalEast = pathAccumulator.totalEast,
+                        motionState = "USER_EXIT_PRESSED",
+                        presenceState = stateMachine.state.name,
+                        stepsSinceStop = stepCountCurrent - stepCountAtStop
+                    )
+                }
+            }
         }
     }
 
@@ -184,8 +214,18 @@ class ExitDetectionService : Service(), SensorEventListener {
 
         // Test logging
         testLogger = TestLogger(this)
-        testLogger?.start()
         loadRoninModel()
+
+        // Register logging control receiver
+        val logFilter = android.content.IntentFilter().apply {
+            addAction(ACTION_TOGGLE_LOGGING)
+            addAction(ACTION_USER_CAR_EXIT)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(loggingReceiver, logFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(loggingReceiver, logFilter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -198,6 +238,7 @@ class ExitDetectionService : Service(), SensorEventListener {
         stopGps()
         bluetoothMonitor?.stop()
         unregisterPowerReceiver()
+        unregisterReceiver(loggingReceiver)
         testLogger?.shutdown()
         roninInterpreter?.close()
         interpreter?.close()

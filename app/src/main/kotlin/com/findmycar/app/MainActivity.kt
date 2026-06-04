@@ -25,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stateText: TextView
     private lateinit var parkInfoText: TextView
     private lateinit var findButton: MaterialButton
+    private lateinit var testLogButton: MaterialButton
+    private lateinit var carExitButton: MaterialButton
+    private var logging = false
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -39,10 +42,15 @@ class MainActivity : AppCompatActivity() {
         stateText = findViewById(R.id.stateText)
         parkInfoText = findViewById(R.id.parkInfoText)
         findButton = findViewById(R.id.findButton)
+        testLogButton = findViewById(R.id.testLogButton)
+        carExitButton = findViewById(R.id.carExitButton)
 
         findButton.setOnClickListener {
             startActivity(Intent(this, FindMyCarActivity::class.java))
         }
+
+        testLogButton.setOnClickListener { toggleLogging() }
+        carExitButton.setOnClickListener { markCarExit() }
 
         // Request location permission, then start service
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -94,5 +102,26 @@ class MainActivity : AppCompatActivity() {
                 findButton.visibility = View.GONE
             }
         }
+    }
+
+    private fun toggleLogging() {
+        logging = !logging
+        val intent = Intent(ExitDetectionService.ACTION_TOGGLE_LOGGING).apply {
+            setPackage(packageName)
+            putExtra("enabled", logging)
+        }
+        sendBroadcast(intent)
+        testLogButton.text = if (logging) "Stop Logging" else "Start Logging"
+        testLogButton.setBackgroundColor(
+            if (logging) Color.parseColor("#F44336") else Color.parseColor("#FF9800")
+        )
+    }
+
+    private fun markCarExit() {
+        val intent = Intent(ExitDetectionService.ACTION_USER_CAR_EXIT).apply {
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+        android.widget.Toast.makeText(this, "Car Exit marked ✓", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
