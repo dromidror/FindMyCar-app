@@ -538,6 +538,8 @@ class ExitDetectionService : Service(), SensorEventListener {
                 .putInt("debug_steps_since_stop", stepsSinceStop)
                 .putBoolean("debug_power_disconnected", powerDisconnectedWhileStopped)
                 .putFloat("debug_pressure", floorDetector.currentPressure)
+                .putFloat("debug_gps_lat", (lastGpsLocation?.latitude ?: 0.0).toFloat())
+                .putFloat("debug_gps_lng", (lastGpsLocation?.longitude ?: 0.0).toFloat())
                 .apply()
 
             handler.postDelayed(this, INFERENCE_INTERVAL_MS)

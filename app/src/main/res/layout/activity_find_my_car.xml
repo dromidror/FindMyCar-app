@@ -1,22 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:orientation="vertical"
     android:background="#1A1A1A">
 
+    <!-- Main content area -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="vertical"
         android:gravity="center"
-        android:padding="32dp">
+        android:padding="24dp">
 
         <!-- Arrow pointing to car -->
         <ImageView
             android:id="@+id/navArrow"
-            android:layout_width="200dp"
-            android:layout_height="200dp"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
             android:src="@drawable/ic_nav_arrow"
             android:contentDescription="Direction to car" />
 
@@ -29,7 +32,7 @@
             android:textSize="48sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
-            android:layout_marginTop="24dp" />
+            android:layout_marginTop="16dp" />
 
         <!-- Accuracy -->
         <TextView
@@ -52,18 +55,18 @@
             android:layout_marginTop="16dp"
             android:visibility="gone" />
 
-        <!-- Found it button -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/foundItButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Found It!"
-            android:textSize="16sp"
-            android:layout_marginTop="32dp"
-            app:backgroundTint="#4CAF50"
-            android:textColor="#FFFFFF"
-            style="@style/Widget.Material3.Button" />
-
     </LinearLayout>
 
-</FrameLayout>
+    <!-- Bottom button (always visible) -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/foundItButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Found It! — Dismiss"
+        android:textSize="18sp"
+        android:layout_margin="24dp"
+        app:backgroundTint="#4CAF50"
+        android:textColor="#FFFFFF"
+        style="@style/Widget.Material3.Button" />
+
+</LinearLayout>

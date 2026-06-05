@@ -35,12 +35,29 @@ class MainActivity : AppCompatActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) ExitDetectionService.start(this)
+        if (granted) {
+            ExitDetectionService.start(this)
+            // Now request background location (needed for always-on GPS)
+            requestBackgroundLocation()
+        }
     }
+
+    private val requestBackgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* Background location granted or denied — service works either way */ }
 
     private val requestActivityRecognition = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ -> /* Step counter will work if granted */ }
+
+    private fun requestBackgroundLocation() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+                requestBackgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,17 +82,19 @@ class MainActivity : AppCompatActivity() {
         val debugToggle = findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.debugToggle)
         val debugSection = findViewById<View>(R.id.debugSection)
         debugToggle.setOnCheckedChangeListener { _, checked ->
+            debugMode = checked
             debugSection.visibility = if (checked) View.VISIBLE else View.GONE
             if (!checked && logging) {
-                // Turn off logging when debug is disabled
                 toggleLogging()
             }
+            updateDisplay()
         }
 
         // Request location permission, then start service
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             == PackageManager.PERMISSION_GRANTED) {
             ExitDetectionService.start(this)
+            requestBackgroundLocation()
         } else {
             requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
@@ -124,6 +143,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var debugMode = false
+
     private fun updateDisplay() {
         val statePrefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
         val state = statePrefs.getString("presence_state", "UNKNOWN") ?: "UNKNOWN"
@@ -132,14 +153,22 @@ class MainActivity : AppCompatActivity() {
 
         when (state) {
             "IN_CAR" -> {
-                stateText.text = "🚗 Driving"
-                stateText.setTextColor(Color.parseColor("#4CAF50"))
+                if (debugMode) {
+                    stateText.text = "🚗 Driving"
+                    stateText.setTextColor(Color.parseColor("#4CAF50"))
+                    stateText.visibility = View.VISIBLE
+                } else {
+                    stateText.visibility = View.GONE
+                }
                 parkInfoText.visibility = View.GONE
-                findButton.visibility = View.GONE
+                findButton.visibility = View.VISIBLE
+                findButton.isEnabled = false
+                findButton.text = "NOT\nPARKED"
             }
             "EXITED" -> {
                 stateText.text = "🅿️ Car Parked"
                 stateText.setTextColor(Color.parseColor("#2196F3"))
+                stateText.visibility = View.VISIBLE
                 if (parkingTimestamp > 0) {
                     val elapsed = System.currentTimeMillis() - parkingTimestamp
                     val minutes = elapsed / 60_000
@@ -164,13 +193,43 @@ class MainActivity : AppCompatActivity() {
                     parkInfoText.text = if (floorStr != null) "$timeStr\n$floorStr" else timeStr
                     parkInfoText.visibility = View.VISIBLE
                 }
+
+                // Check distance to car — only enable Find if > 10m away
+                val parkLat = parkingPrefs.getFloat("latitude", 0f).toDouble()
+                val parkLng = parkingPrefs.getFloat("longitude", 0f).toDouble()
+                val hasGps = parkingPrefs.getBoolean("has_gps", false)
+                val gpsAvailable = statePrefs.getBoolean("debug_gps_available", false)
+                val currentLat = statePrefs.getFloat("debug_gps_lat", 0f).toDouble()
+                val currentLng = statePrefs.getFloat("debug_gps_lng", 0f).toDouble()
+
+                val distanceToCar = if (hasGps && gpsAvailable && parkLat != 0.0 && currentLat != 0.0) {
+                    com.findmycar.shared.LatLng(currentLat, currentLng)
+                        .distanceTo(com.findmycar.shared.LatLng(parkLat, parkLng))
+                } else {
+                    Float.MAX_VALUE // Unknown distance — allow Find
+                }
+
                 findButton.visibility = View.VISIBLE
+                if (distanceToCar > 10f) {
+                    findButton.isEnabled = true
+                    findButton.text = "FIND\nMY CAR"
+                } else {
+                    findButton.isEnabled = false
+                    findButton.text = "CAR IS\nNEARBY"
+                }
             }
             else -> {
-                stateText.text = "⏳ Waiting for drive..."
-                stateText.setTextColor(Color.GRAY)
+                if (debugMode) {
+                    stateText.text = "⏳ Waiting for drive..."
+                    stateText.setTextColor(Color.GRAY)
+                    stateText.visibility = View.VISIBLE
+                } else {
+                    stateText.visibility = View.GONE
+                }
                 parkInfoText.visibility = View.GONE
-                findButton.visibility = View.GONE
+                findButton.visibility = View.VISIBLE
+                findButton.isEnabled = false
+                findButton.text = "NOT\nPARKED"
             }
         }
     }
