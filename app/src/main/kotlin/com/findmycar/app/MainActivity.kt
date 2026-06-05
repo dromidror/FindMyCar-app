@@ -61,6 +61,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // TTL check: app expires 2 months after build
+        val expiryDate = 1785877200000L  // August 5, 2026 (2 months from June 5, 2026)
+        if (System.currentTimeMillis() > expiryDate) {
+            setContentView(android.widget.TextView(this).apply {
+                text = "This beta version has expired.\nPlease update to the latest version."
+                textSize = 20f
+                gravity = android.view.Gravity.CENTER
+                setPadding(48, 48, 48, 48)
+            })
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
         stateText = findViewById(R.id.stateText)
@@ -166,9 +179,13 @@ class MainActivity : AppCompatActivity() {
                 findButton.text = "NOT\nPARKED"
             }
             "EXITED" -> {
-                stateText.text = "🅿️ Car Parked"
-                stateText.setTextColor(Color.parseColor("#2196F3"))
-                stateText.visibility = View.VISIBLE
+                if (debugMode) {
+                    stateText.text = "🅿️ Car Parked"
+                    stateText.setTextColor(Color.parseColor("#2196F3"))
+                    stateText.visibility = View.VISIBLE
+                } else {
+                    stateText.visibility = View.GONE
+                }
                 if (parkingTimestamp > 0) {
                     val elapsed = System.currentTimeMillis() - parkingTimestamp
                     val minutes = elapsed / 60_000
