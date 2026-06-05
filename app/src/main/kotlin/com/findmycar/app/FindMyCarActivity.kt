@@ -86,6 +86,10 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
         sensorManager = getSystemService(SensorManager::class.java)
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
 
+        findViewById<com.google.android.material.button.MaterialButton>(R.id.foundItButton).setOnClickListener {
+            finish()
+        }
+
         loadParkingSpot()
         startNavigation()
     }

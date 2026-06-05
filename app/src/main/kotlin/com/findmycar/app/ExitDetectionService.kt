@@ -56,6 +56,7 @@ class ExitDetectionService : Service(), SensorEventListener {
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var prefs: SharedPreferences
     private lateinit var parkingPrefs: SharedPreferences
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private val stateMachine = CarPresenceStateMachine()
     private val handler = Handler(Looper.getMainLooper())
@@ -76,14 +77,13 @@ class ExitDetectionService : Service(), SensorEventListener {
     private var yawDeg = 0f
     private var pitchDeg = 0f
     private var rollDeg = 0f
+    private var imuSensorsActive = false
 
-    // Step counter
-    private var stepCountBaseline = -1
-    private var stepCountCurrent = 0
-    private var stepCountAtStop = 0
-    private var stepCountAtPickup = 0
-    private var stepCountAtSlowStart = 0
-    private var lastStepTimeMs = 0L
+    // Step detection
+    private var stepsSinceStop = 0      // count since last CAR_STOPPED (for exit detection)
+    private var stepsSincePickup = 0    // count since pickup event
+    private var lastStepTimeMs = 0L     // when last step occurred (for "is walking" check)
+    private var isWalking = false       // true if step detected in last 3 seconds
 
     // GPS state
     private var lastGpsLocation: Location? = null
@@ -179,7 +179,7 @@ class ExitDetectionService : Service(), SensorEventListener {
                         roninTotalEast = pathAccumulator.totalEast,
                         motionState = "USER_EXIT_PRESSED",
                         presenceState = stateMachine.state.name,
-                        stepsSinceStop = stepCountCurrent - stepCountAtStop
+                        stepsSinceStop = stepsSinceStop
                     )
                 }
             }
@@ -197,6 +197,11 @@ class ExitDetectionService : Service(), SensorEventListener {
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Initializing..."))
+
+        // Acquire partial wake lock to keep CPU running
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "FindMyCar::ExitDetection")
+        wakeLock?.acquire()
 
         // Restore state
         val savedState = prefs.getString(KEY_STATE, "UNKNOWN") ?: "UNKNOWN"
@@ -244,6 +249,7 @@ class ExitDetectionService : Service(), SensorEventListener {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
         sensorManager.unregisterListener(this)
+        sensorManager.unregisterListener(pickupDetector)
         stopGps()
         bluetoothMonitor?.stop()
         unregisterPowerReceiver()
@@ -251,6 +257,7 @@ class ExitDetectionService : Service(), SensorEventListener {
         testLogger?.shutdown()
         roninInterpreter?.close()
         interpreter?.close()
+        wakeLock?.release()
     }
 
     // --- Model loading (fallback for no-GPS) ---
@@ -303,10 +310,17 @@ class ExitDetectionService : Service(), SensorEventListener {
             lastGpsFixTimeMs = System.currentTimeMillis()
             gpsSpeedKmh = loc.speed * 3.6f
 
+            // Adaptive GPS rate: slow down at high speeds (nothing interesting happens on highway)
+            val desiredIntervalMs = if (gpsSpeedKmh > 100f) 3000L else 1000L
+            if (desiredIntervalMs != currentGpsIntervalMs) {
+                currentGpsIntervalMs = desiredIntervalMs
+                restartGpsWithInterval(desiredIntervalMs)
+            }
+
             // If PathAccumulator was active and GPS returned → anchor
             if (pathAccumulator.isActive) {
+                readBarometer()  // Get pressure at GPS return point
                 val displacement = pathAccumulator.stopAndEmit()
-                // Resolve parking location backward
                 val currentLatLng = LatLng(loc.latitude, loc.longitude)
                 val parkingLatLng = currentLatLng.minus(displacement)
                 saveParkingSpot(parkingLatLng, loc.accuracy)
@@ -314,14 +328,27 @@ class ExitDetectionService : Service(), SensorEventListener {
         }
     }
 
+    private var currentGpsIntervalMs = 1000L
+
     private fun startGps() {
         if (gpsActive) return
         try {
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-                .setMinUpdateIntervalMillis(1000L)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, currentGpsIntervalMs)
+                .setMinUpdateIntervalMillis(currentGpsIntervalMs)
                 .build()
             fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
             gpsActive = true
+        } catch (_: SecurityException) {}
+    }
+
+    private fun restartGpsWithInterval(intervalMs: Long) {
+        if (!gpsActive) return
+        try {
+            fusedClient.removeLocationUpdates(locationCallback)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+                .setMinUpdateIntervalMillis(intervalMs)
+                .build()
+            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
         } catch (_: SecurityException) {}
     }
 
@@ -338,6 +365,27 @@ class ExitDetectionService : Service(), SensorEventListener {
     // --- Sensors ---
 
     private fun startSensors() {
+        // Start with nothing — sensors enabled/disabled dynamically based on GPS state
+        // Pickup detector always light
+        pickupDetector = PickupDetector { onPickupDetected() }
+
+        handler.post(sampleRunnable)
+        handler.postDelayed(inferenceRunnable, INFERENCE_INTERVAL_MS)
+    }
+
+    /** Start step detector (for exit detection when speed < 10 km/h). */
+    private fun startStepDetector() {
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sensorManager.registerListener(pickupDetector, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+    }
+
+    /** Start accelerometer/gyroscope/rotation for ML model inference (no GPS fallback). */
+    private fun startImuSensors() {
+        if (imuSensorsActive) return
         sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
@@ -347,22 +395,32 @@ class ExitDetectionService : Service(), SensorEventListener {
         sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
-        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
+        imuSensorsActive = true
+    }
+
+    /** Stop all sensors. */
+    private fun stopAllSensors() {
+        sensorManager.unregisterListener(this)
+        sensorManager.unregisterListener(pickupDetector)
+        imuSensorsActive = false
+    }
+
+    /** Stop IMU sensors, keep step detector if needed. */
+    private fun stopImuSensors() {
+        if (!imuSensorsActive) return
+        sensorManager.unregisterListener(this)
+        imuSensorsActive = false
+    }
+
+    /** Read barometer samples (for floor calculation at specific moments). */
+    private fun readBarometer() {
+        barometerOneShot = true
         sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
-
-        // Pickup detector
-        pickupDetector = PickupDetector { onPickupDetected() }
-        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
-            sensorManager.registerListener(pickupDetector, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
-
-        handler.post(sampleRunnable)
-        handler.postDelayed(inferenceRunnable, INFERENCE_INTERVAL_MS)
     }
+
+    private var barometerOneShot = false
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
@@ -386,14 +444,15 @@ class ExitDetectionService : Service(), SensorEventListener {
                 // Update step dead reckoning heading
                 stepDeadReckoning.updateHeading(yawDeg)
             }
-            Sensor.TYPE_STEP_COUNTER -> {
-                val totalSteps = event.values[0].toInt()
-                if (stepCountBaseline < 0) stepCountBaseline = totalSteps
-                if (totalSteps > stepCountCurrent) lastStepTimeMs = System.currentTimeMillis()
-                stepCountCurrent = totalSteps
-                // Accumulate displacement during GPS gaps
+            Sensor.TYPE_STEP_DETECTOR -> {
+                // Each event = one step detected
+                lastStepTimeMs = System.currentTimeMillis()
+                isWalking = true
+                stepsSinceStop++
+                stepsSincePickup++
+                // Dead reckoning displacement
                 if (pathAccumulator.isActive) {
-                    val displacement = stepDeadReckoning.onStepCount(totalSteps)
+                    val displacement = stepDeadReckoning.onStepCount(stepsSinceStop)
                     if (displacement.magnitude > 0f) {
                         pathAccumulator.addDisplacement(displacement)
                     }
@@ -401,6 +460,11 @@ class ExitDetectionService : Service(), SensorEventListener {
             }
             Sensor.TYPE_PRESSURE -> {
                 floorDetector.addReading(event.values[0])
+                // One-shot: unregister after getting reading
+                if (barometerOneShot) {
+                    sensorManager.unregisterListener(this, sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)!!)
+                    barometerOneShot = false
+                }
             }
         }
     }
@@ -461,7 +525,7 @@ class ExitDetectionService : Service(), SensorEventListener {
                 roninTotalEast = pathAccumulator.totalEast,
                 motionState = currentMotionState,
                 presenceState = stateMachine.state.name,
-                stepsSinceStop = stepCountCurrent - stepCountAtStop
+                stepsSinceStop = stepsSinceStop
             )
 
             // Update debug indicators for UI
@@ -471,7 +535,7 @@ class ExitDetectionService : Service(), SensorEventListener {
                 .putBoolean("debug_gps_available", hasRecentGps())
                 .putBoolean("debug_charging", wasChargingWhileDriving)
                 .putBoolean("debug_bt_connected", carBluetoothConnected)
-                .putInt("debug_steps_since_stop", stepCountCurrent - stepCountAtStop)
+                .putInt("debug_steps_since_stop", stepsSinceStop)
                 .putBoolean("debug_power_disconnected", powerDisconnectedWhileStopped)
                 .putFloat("debug_pressure", floorDetector.currentPressure)
                 .apply()
@@ -483,19 +547,29 @@ class ExitDetectionService : Service(), SensorEventListener {
     /**
      * Determine current motion state.
      * Priority: Steps override > GPS speed > ML model fallback.
-     * If step counter is active (walking), state cannot be DRIVING.
      */
     private fun determineMotionState() {
         val newMotionState: String
 
         // Steps counting = walking, not driving
-        val recentSteps = stepCountCurrent - stepCountAtStop
+        val recentSteps = stepsSinceStop
         val stepsActive = recentSteps > 0 && (System.currentTimeMillis() - lastStepTimeMs) < 3000L
+
+        // Reset walking flag if no steps for 3 seconds
+        if (!stepsActive) isWalking = false
 
         if (stepsActive) {
             // Walking — cannot be driving regardless of GPS speed
             newMotionState = "CAR_STOPPED"
         } else if (hasRecentGps()) {
+            if (gpsSpeedKmh >= 10f) {
+                // Fast driving — no sensors needed, GPS only
+                stopAllSensors()
+            } else {
+                // Slow/stopped — need step detector for exit detection
+                stopImuSensors()
+                startStepDetector()
+            }
             // PRIMARY: Use GPS speed directly
             newMotionState = if (gpsSpeedKmh < SPEED_STOPPED_THRESHOLD_KMH) {
                 "CAR_STOPPED"
@@ -503,7 +577,10 @@ class ExitDetectionService : Service(), SensorEventListener {
                 "CAR_MOVING"
             }
         } else {
-            // No GPS — calibrate barometer for floor detection (once per trip)
+            // No GPS — turn on IMU sensors for ML model + step detector
+            startImuSensors()
+            startStepDetector()
+            // Calibrate barometer for floor detection (once per trip)
             if (!floorDetector.isCalibrated && currentMotionState == "CAR_MOVING") {
                 floorDetector.calibrate()
             }
@@ -558,13 +635,15 @@ class ExitDetectionService : Service(), SensorEventListener {
     private fun onMotionStateChanged(oldState: String, newState: String) {
         if (newState == "CAR_STOPPED" && oldState != "CAR_STOPPED") {
             stopTimestampMs = System.currentTimeMillis()
-            stepCountAtStop = stepCountCurrent
+            stepsSinceStop = 0
+            stepsSincePickup = 0
             pickupDetected = false
             pickupDetector?.reset()
             powerDisconnectedWhileStopped = false
         }
         if (newState == "CAR_MOVING") {
-            stepCountAtSlowStart = stepCountCurrent
+            // Reset steps when driving resumes
+            stepsSinceStop = 0
             // If charging while driving → mark for exit detection
             val batteryIntent = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             val plugged = batteryIntent?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, -1) ?: -1
@@ -575,7 +654,7 @@ class ExitDetectionService : Service(), SensorEventListener {
     private fun onPickupDetected() {
         if (stateMachine.state == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED") {
             pickupDetected = true
-            stepCountAtPickup = stepCountCurrent
+            stepsSincePickup = 0
         }
     }
 
@@ -583,15 +662,13 @@ class ExitDetectionService : Service(), SensorEventListener {
 
     private fun evaluateStateMachine() {
         val now = System.currentTimeMillis()
-        val stepsSinceStop = stepCountCurrent - stepCountAtStop
-        val stepsSincePickup = if (pickupDetected) stepCountCurrent - stepCountAtPickup else 0
-        val stepsDuringMotion = stepCountCurrent - stepCountAtSlowStart
+        val stepsDuringMotion = 0 // not tracked per slow period anymore
 
         val input = StateMachineInput(
             motionState = currentMotionState,
             motionStateDurationMs = now - motionStateStartMs,
             stepsSinceStop = stepsSinceStop,
-            stepsDuringSlowMotion = stepsDuringMotion,
+            stepsDuringSlowMotion = if (isWalking) 1 else 0,
             timeSinceStopMs = if (stopTimestampMs > 0) now - stopTimestampMs else 0,
             pickupDetected = pickupDetected,
             stepsSincePickup = stepsSincePickup,
@@ -614,9 +691,16 @@ class ExitDetectionService : Service(), SensorEventListener {
                 wasChargingWhileDriving = false
                 powerDisconnectedWhileStopped = false
                 floorDetector.reset()
+                // Resume normal GPS rate
+                currentGpsIntervalMs = 1000L
+                restartGpsWithInterval(1000L)
+                // Re-acquire WakeLock for active tracking
+                if (wakeLock?.isHeld == false) wakeLock?.acquire()
                 updateNotification("🚗 In car — tracking")
             }
             CarPresenceState.EXITED -> {
+                // Read barometer for floor calculation
+                readBarometer()
                 // Save parking spot + floor
                 val loc = lastGpsLocation
                 val parkingFloor = floorDetector.computeFloor()
@@ -633,6 +717,12 @@ class ExitDetectionService : Service(), SensorEventListener {
                     .putBoolean("has_floor", parkingFloor != null)
                     .putFloat("parking_pressure", parkingPressureVal)
                     .apply()
+                // Enter low-power mode: GPS 1/minute, no sensors
+                stopAllSensors()
+                currentGpsIntervalMs = 60_000L
+                restartGpsWithInterval(60_000L)
+                // Release WakeLock to save battery overnight
+                wakeLock?.release()
                 val floorLabel = com.findmycar.shared.formatFloorShort(parkingFloor) ?: ""
                 updateNotification("🅿️ Car parked${if (floorLabel.isNotEmpty()) " ($floorLabel)" else ""}")
             }

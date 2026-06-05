@@ -61,6 +61,17 @@ class MainActivity : AppCompatActivity() {
         carExitButton.setOnClickListener { markCarExit() }
         findViewById<MaterialButton>(R.id.clearLogsButton).setOnClickListener { clearLogs() }
 
+        // Debug toggle
+        val debugToggle = findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.debugToggle)
+        val debugSection = findViewById<View>(R.id.debugSection)
+        debugToggle.setOnCheckedChangeListener { _, checked ->
+            debugSection.visibility = if (checked) View.VISIBLE else View.GONE
+            if (!checked && logging) {
+                // Turn off logging when debug is disabled
+                toggleLogging()
+            }
+        }
+
         // Request location permission, then start service
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             == PackageManager.PERMISSION_GRANTED) {
@@ -75,6 +86,23 @@ class MainActivity : AppCompatActivity() {
             != PackageManager.PERMISSION_GRANTED) {
             requestActivityRecognition.launch(Manifest.permission.ACTIVITY_RECOGNITION)
         }
+
+        // Request battery optimization exemption (critical for background survival)
+        requestBatteryOptimizationExemption()
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.data = android.net.Uri.parse("package:$packageName")
+                startActivity(intent)
+            } catch (_: Exception) {}
+        }
+
+        // Schedule heartbeat to restart service if killed
+        ServiceHeartbeat.schedule(this)
     }
 
     override fun onResume() {

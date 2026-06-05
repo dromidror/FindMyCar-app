@@ -5,9 +5,31 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:gravity="center"
-    android:padding="32dp"
+    android:padding="24dp"
     android:background="#1A1A1A">
 
+    <!-- Debug toggle (top-right) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end">
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/debugToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Debug"
+            android:textColor="#666666"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- Spacer -->
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- State display -->
     <TextView
         android:id="@+id/stateText"
         android:layout_width="wrap_content"
@@ -29,65 +51,84 @@
         android:layout_marginTop="8dp"
         android:visibility="gone" />
 
-    <!-- Debug indicators -->
-    <TextView
-        android:id="@+id/debugIndicators"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="12sp"
-        android:fontFamily="monospace"
-        android:textColor="#AAAAAA"
-        android:gravity="start"
-        android:layout_marginTop="16dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp" />
-
+    <!-- Big circular Find button -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/findButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Find My Car"
-        android:textSize="20sp"
-        android:layout_marginTop="48dp"
-        android:paddingStart="32dp"
-        android:paddingEnd="32dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="16dp"
-        android:visibility="gone"
-        app:backgroundTint="#2196F3"
-        android:textColor="#FFFFFF"
-        style="@style/Widget.Material3.Button" />
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/testLogButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Start Logging"
-        android:textSize="14sp"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
+        android:text="FIND\nMY CAR"
+        android:textSize="18sp"
         android:layout_marginTop="32dp"
-        app:backgroundTint="#FF9800"
+        android:visibility="gone"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        app:backgroundTint="#2196F3"
+        app:cornerRadius="80dp"
         android:textColor="#FFFFFF"
         style="@style/Widget.Material3.Button" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/carExitButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Car Exit"
-        android:textSize="14sp"
-        android:layout_marginTop="12dp"
-        app:backgroundTint="#9C27B0"
-        android:textColor="#FFFFFF"
-        style="@style/Widget.Material3.Button" />
+    <!-- Spacer -->
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/clearLogsButton"
-        android:layout_width="wrap_content"
+    <!-- Debug section (hidden by default) -->
+    <LinearLayout
+        android:id="@+id/debugSection"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Clear Logs"
-        android:textSize="12sp"
-        android:layout_marginTop="12dp"
-        style="@style/Widget.Material3.Button.TextButton" />
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Debug indicators -->
+        <TextView
+            android:id="@+id/debugIndicators"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:textColor="#AAAAAA"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Debug buttons row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/testLogButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Log"
+                android:textSize="12sp"
+                app:backgroundTint="#FF9800"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.Material3.Button" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/carExitButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Car Exit"
+                android:textSize="12sp"
+                android:layout_marginStart="8dp"
+                app:backgroundTint="#9C27B0"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.Material3.Button" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/clearLogsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Clear"
+                android:textSize="12sp"
+                android:layout_marginStart="8dp"
+                style="@style/Widget.Material3.Button.TextButton" />
+        </LinearLayout>
+    </LinearLayout>
 
 </LinearLayout>
