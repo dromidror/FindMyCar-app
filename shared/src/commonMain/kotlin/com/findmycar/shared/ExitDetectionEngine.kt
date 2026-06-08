@@ -1,0 +1,313 @@
+package com.findmycar.shared
+
+/**
+ * Platform-independent exit detection engine.
+ *
+ * Contains all the logic that was previously in ExitDetectionService (Android),
+ * but uses provider interfaces instead of direct platform calls.
+ * This enables the same logic to run on Android and iOS.
+ */
+class ExitDetectionEngine(
+    private val location: LocationProvider,
+    private val steps: StepProvider,
+    private val barometer: BarometerProvider,
+    private val imu: ImuProvider,
+    private val compass: CompassProvider,
+    private val bluetooth: BluetoothProvider,
+    private val persistence: PersistenceProvider,
+    private val notification: NotificationProvider
+) {
+    val stateMachine = CarPresenceStateMachine()
+    val floorDetector = FloorDetector()
+    val pathAccumulator = PathAccumulator()
+
+    // Motion state
+    private var currentMotionState = "CAR_STOPPED"
+    private var motionStateStartMs = currentTimeMs()
+    private var stopTimestampMs = 0L
+    private var locationAtStop: LatLng? = null
+
+    // Steps
+    private var stepsSinceStop = 0
+    private var stepsSincePickup = 0
+    private var isWalking = false
+    private var lastStepTimeMs = 0L
+
+    // Pickup
+    private var pickupDetected = false
+
+    // Power/BT
+    private var wasChargingWhileDriving = false
+    private var carBluetoothConnected = false
+
+    // GPS rate
+    private var currentGpsIntervalMs = 1000L
+
+    companion object {
+        private const val GPS_STALE_MS = 10_000L
+        private const val SPEED_STOPPED_THRESHOLD_KMH = 1.0f
+        private const val INFERENCE_INTERVAL_MS = 5000L
+    }
+
+    /**
+     * Initialize: restore state, register listeners, start providers.
+     */
+    fun start() {
+        // Restore state
+        val savedState = persistence.getString("presence_state", "INIT") ?: "INIT"
+        stateMachine.restoreState(
+            when (savedState) {
+                "IN_CAR" -> CarPresenceState.IN_CAR
+                "EXITED" -> CarPresenceState.EXITED
+                "UNKNOWN" -> CarPresenceState.UNKNOWN
+                else -> CarPresenceState.INIT
+            }
+        )
+
+        // Register step listener
+        steps.onStep {
+            lastStepTimeMs = currentTimeMs()
+            isWalking = true
+            stepsSinceStop++
+            stepsSincePickup++
+        }
+
+        // Register location listener
+        location.onLocationChanged { pos, speedKmh, accuracy ->
+            onLocationUpdate(pos, speedKmh)
+        }
+
+        // Register BT
+        bluetooth.onCarConnected {
+            carBluetoothConnected = true
+            evaluate()
+        }
+        bluetooth.onCarDisconnected {
+            carBluetoothConnected = false
+        }
+
+        // Start GPS
+        location.startUpdates(currentGpsIntervalMs)
+        steps.start()
+
+        notification.show("Initializing...")
+    }
+
+    /**
+     * Stop all providers.
+     */
+    fun stop() {
+        location.stopUpdates()
+        steps.stop()
+        imu.stop()
+        barometer.stopContinuous()
+        bluetooth.stopMonitoring()
+    }
+
+    /**
+     * Called periodically (every 5 seconds) by the platform timer.
+     */
+    fun tick() {
+        determineMotionState()
+        evaluate()
+    }
+
+    // --- Core logic ---
+
+    private fun determineMotionState() {
+        val newMotionState: String
+
+        // Walking check
+        val stepsActive = stepsSinceStop > 0 && (currentTimeMs() - lastStepTimeMs) < 3000L
+        if (!stepsActive) isWalking = false
+
+        if (stepsActive) {
+            newMotionState = "CAR_STOPPED"
+        } else if (location.isAvailable()) {
+            val speed = location.getSpeedKmh() ?: 0f
+            // Adaptive GPS rate
+            if (speed > 100f && currentGpsIntervalMs != 3000L) {
+                currentGpsIntervalMs = 3000L
+                location.setInterval(3000L)
+            } else if (speed <= 100f && currentGpsIntervalMs != 1000L &&
+                       stateMachine.state != CarPresenceState.EXITED) {
+                currentGpsIntervalMs = 1000L
+                location.setInterval(1000L)
+            }
+
+            if (speed >= 10f) {
+                // Fast driving — stop IMU
+                imu.stop()
+                steps.stop()
+            } else {
+                steps.start()
+            }
+
+            newMotionState = if (speed < SPEED_STOPPED_THRESHOLD_KMH) "CAR_STOPPED" else "CAR_MOVING"
+        } else {
+            // No GPS — use IMU model (placeholder, actual inference done by platform)
+            imu.start()
+            steps.start()
+            if (!floorDetector.isCalibrated && currentMotionState == "CAR_MOVING") {
+                floorDetector.calibrate()
+            }
+            newMotionState = currentMotionState // Keep current until platform provides model result
+        }
+
+        if (newMotionState != currentMotionState) {
+            onMotionStateChanged(currentMotionState, newMotionState)
+            currentMotionState = newMotionState
+            motionStateStartMs = currentTimeMs()
+        }
+    }
+
+    private fun onMotionStateChanged(oldState: String, newState: String) {
+        if (newState == "CAR_STOPPED" && oldState != "CAR_STOPPED") {
+            stopTimestampMs = currentTimeMs()
+            stepsSinceStop = 0
+            stepsSincePickup = 0
+            pickupDetected = false
+            locationAtStop = location.getLastLocation()
+        }
+        if (newState == "CAR_MOVING") {
+            stepsSinceStop = 0
+        }
+    }
+
+    private fun evaluate() {
+        val now = currentTimeMs()
+        val input = StateMachineInput(
+            motionState = currentMotionState,
+            motionStateDurationMs = now - motionStateStartMs,
+            stepsSinceStop = stepsSinceStop,
+            stepsDuringSlowMotion = if (isWalking) 1 else 0,
+            timeSinceStopMs = if (stopTimestampMs > 0) now - stopTimestampMs else 0,
+            pickupDetected = pickupDetected,
+            stepsSincePickup = stepsSincePickup,
+            carBluetoothConnected = carBluetoothConnected
+        )
+
+        val oldState = stateMachine.state
+        val newState = stateMachine.evaluate(input)
+
+        if (newState != oldState) {
+            onStateTransition(StateTransition(oldState, newState))
+        }
+    }
+
+    private fun onStateTransition(transition: StateTransition) {
+        persistence.putString("presence_state", transition.to.name)
+
+        when (transition.to) {
+            CarPresenceState.INIT -> {
+                notification.update("⏳ Initializing...")
+            }
+            CarPresenceState.UNKNOWN -> {
+                notification.update("⏳ Waiting for drive...")
+            }
+            CarPresenceState.IN_CAR -> {
+                wasChargingWhileDriving = false
+                floorDetector.reset()
+                currentGpsIntervalMs = 1000L
+                location.setInterval(1000L)
+                notification.update("🚗 In car — tracking")
+            }
+            CarPresenceState.EXITED -> {
+                // Read barometer for floor
+                barometer.readOnce { pressure ->
+                    floorDetector.addReading(pressure)
+                }
+                val parkingFloor = floorDetector.computeFloor()
+
+                // Save parking at stop location
+                val loc = locationAtStop ?: location.getLastLocation()
+                if (loc != null && location.isAvailable()) {
+                    saveParkingGps(loc, location.getAccuracy())
+                } else {
+                    pathAccumulator.start()
+                    saveParkingNoGps()
+                }
+
+                // Save floor
+                persistence.putInt("floor", parkingFloor ?: 0)
+                persistence.putBoolean("has_floor", parkingFloor != null)
+                persistence.putFloat("parking_pressure", floorDetector.currentPressure)
+
+                // Enter low-power mode
+                imu.stop()
+                steps.start()  // Keep for "return to car" detection
+                currentGpsIntervalMs = 60_000L
+                location.setInterval(60_000L)
+
+                val floorLabel = formatFloorShort(parkingFloor) ?: ""
+                notification.update("🅿️ Car parked${if (floorLabel.isNotEmpty()) " ($floorLabel)" else ""}")
+            }
+        }
+    }
+
+    private fun onLocationUpdate(pos: LatLng, speedKmh: Float) {
+        // GPS anchor: if accumulating and GPS returns
+        if (pathAccumulator.isActive) {
+            barometer.readOnce { floorDetector.addReading(it) }
+            val displacement = pathAccumulator.stopAndEmit()
+            val parkingPos = pos.minus(displacement)
+            saveParkingGps(parkingPos, null)
+        }
+    }
+
+    /**
+     * Called by platform when phone pickup is detected.
+     */
+    fun onPickupDetected() {
+        if (stateMachine.state == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED") {
+            pickupDetected = true
+            stepsSincePickup = 0
+        }
+    }
+
+    /**
+     * Update motion state from external ML model inference (platform-specific).
+     */
+    fun setMotionStateFromModel(state: String) {
+        if (!location.isAvailable()) {
+            if (state != currentMotionState) {
+                onMotionStateChanged(currentMotionState, state)
+                currentMotionState = state
+                motionStateStartMs = currentTimeMs()
+            }
+        }
+    }
+
+    // --- Persistence helpers ---
+
+    private fun saveParkingGps(pos: LatLng, accuracy: Float?) {
+        persistence.putFloat("latitude", pos.lat.toFloat())
+        persistence.putFloat("longitude", pos.lng.toFloat())
+        persistence.putFloat("accuracy", accuracy ?: 0f)
+        persistence.putLong("timestamp", currentTimeMs())
+        persistence.putBoolean("has_gps", true)
+    }
+
+    private fun saveParkingNoGps() {
+        persistence.putLong("timestamp", currentTimeMs())
+        persistence.putBoolean("has_gps", false)
+    }
+
+    // --- Utility ---
+
+    private fun currentTimeMs(): Long = platformTimeMs()
+}
+
+/**
+ * Platform-specific time function.
+ * Must be provided by expect/actual or passed in.
+ */
+expect fun platformTimeMs(): Long
+
+/**
+ * Simple data class for state transition info.
+ */
+data class StateTransition(
+    val from: CarPresenceState,
+    val to: CarPresenceState
+)
