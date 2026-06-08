@@ -16,20 +16,23 @@ class CarPresenceStateMachine {
         /** Duration of CAR_MOVING needed to confirm user is in a car */
         const val MOVING_CONFIRM_MS = 10_000L
 
+        /** Duration of CAR_MOVING needed to exit INIT state (first-time calibration) */
+        const val INIT_MOVING_CONFIRM_MS = 600_000L  // 10 minutes
+
         /** Duration of CAR_SLOW (with no steps) needed to confirm user is in a car */
         const val SLOW_CONFIRM_MS = 20_000L
 
         /** Steps needed after stop to confirm exit */
-        const val EXIT_STEPS_THRESHOLD = 15
+        const val EXIT_STEPS_THRESHOLD = 5
 
         /** Steps needed after pickup event to confirm exit (faster path) */
-        const val EXIT_STEPS_AFTER_PICKUP = 5
+        const val EXIT_STEPS_AFTER_PICKUP = 3
 
         /** Maximum time after stop to detect exit (5 minutes) */
         const val EXIT_WINDOW_MS = 300_000L
     }
 
-    var state: CarPresenceState = CarPresenceState.UNKNOWN
+    var state: CarPresenceState = CarPresenceState.INIT
         private set
 
     /**
@@ -41,6 +44,7 @@ class CarPresenceStateMachine {
      */
     fun evaluate(input: StateMachineInput): CarPresenceState {
         val newState = when (state) {
+            CarPresenceState.INIT -> evaluateInit(input)
             CarPresenceState.UNKNOWN -> evaluateUnknown(input)
             CarPresenceState.IN_CAR -> evaluateInCar(input)
             CarPresenceState.EXITED -> evaluateExited(input)
@@ -57,10 +61,20 @@ class CarPresenceStateMachine {
     }
 
     /**
-     * Reset to UNKNOWN state.
+     * Reset to INIT state.
      */
     fun reset() {
-        state = CarPresenceState.UNKNOWN
+        state = CarPresenceState.INIT
+    }
+
+    // --- INIT state (first time after install) ---
+
+    private fun evaluateInit(input: StateMachineInput): CarPresenceState {
+        // Need 10 minutes of sustained driving to confirm this is a car user
+        if (input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= INIT_MOVING_CONFIRM_MS) {
+            return CarPresenceState.IN_CAR
+        }
+        return CarPresenceState.INIT
     }
 
     // --- UNKNOWN state ---
@@ -127,10 +141,12 @@ class CarPresenceStateMachine {
 }
 
 /**
- * The three possible states of user-car presence.
+ * The possible states of user-car presence.
  */
 enum class CarPresenceState {
-    /** Initial state — no vehicle motion detected yet */
+    /** Initial state after app install — waiting for first 10-min drive */
+    INIT,
+    /** No vehicle motion detected yet (after first trip completed) */
     UNKNOWN,
     /** User is inside the car (driving or recently stopped) */
     IN_CAR,

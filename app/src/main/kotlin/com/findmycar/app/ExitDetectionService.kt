@@ -59,6 +59,7 @@ class ExitDetectionService : Service(), SensorEventListener {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private val stateMachine = CarPresenceStateMachine()
+    private val stateEventEmitter = com.findmycar.shared.StateEventEmitter()
     private val handler = Handler(Looper.getMainLooper())
     private val pathAccumulator = PathAccumulator()
     private val stepDeadReckoning = com.findmycar.shared.StepDeadReckoning()
@@ -90,6 +91,7 @@ class ExitDetectionService : Service(), SensorEventListener {
     private var lastGpsFixTimeMs = 0L
     private var gpsSpeedKmh = 0f
     private var gpsActive = false
+    private var locationAtStop: Location? = null  // GPS position when car first stopped (speed ≈ 0)
 
     // Motion state tracking
     private var currentMotionState = "CAR_STOPPED"
@@ -204,14 +206,18 @@ class ExitDetectionService : Service(), SensorEventListener {
         wakeLock?.acquire()
 
         // Restore state
-        val savedState = prefs.getString(KEY_STATE, "UNKNOWN") ?: "UNKNOWN"
+        val savedState = prefs.getString(KEY_STATE, "INIT") ?: "INIT"
         stateMachine.restoreState(
             when (savedState) {
                 "IN_CAR" -> CarPresenceState.IN_CAR
                 "EXITED" -> CarPresenceState.EXITED
-                else -> CarPresenceState.UNKNOWN
+                "UNKNOWN" -> CarPresenceState.UNKNOWN
+                else -> CarPresenceState.INIT
             }
         )
+
+        // Register state transition event handler
+        stateEventEmitter.on { event -> onStateTransition(event.from, event.to) }
 
         // Download models if missing, then load them
         Thread {
@@ -642,6 +648,8 @@ class ExitDetectionService : Service(), SensorEventListener {
             pickupDetected = false
             pickupDetector?.reset()
             powerDisconnectedWhileStopped = false
+            // Save GPS at the moment car stopped — this is the actual parking location
+            locationAtStop = lastGpsLocation
         }
         if (newState == "CAR_MOVING") {
             // Reset steps when driving resumes
@@ -664,7 +672,6 @@ class ExitDetectionService : Service(), SensorEventListener {
 
     private fun evaluateStateMachine() {
         val now = System.currentTimeMillis()
-        val stepsDuringMotion = 0 // not tracked per slow period anymore
 
         val input = StateMachineInput(
             motionState = currentMotionState,
@@ -681,7 +688,7 @@ class ExitDetectionService : Service(), SensorEventListener {
         val newState = stateMachine.evaluate(input)
 
         if (newState != oldState) {
-            onStateTransition(oldState, newState)
+            stateEventEmitter.emit(com.findmycar.shared.StateTransitionEvent(oldState, newState))
         }
     }
 
@@ -689,6 +696,12 @@ class ExitDetectionService : Service(), SensorEventListener {
         prefs.edit().putString(KEY_STATE, to.name).apply()
 
         when (to) {
+            CarPresenceState.INIT -> {
+                updateNotification("⏳ Initializing...")
+            }
+            CarPresenceState.UNKNOWN -> {
+                updateNotification("⏳ Waiting for drive...")
+            }
             CarPresenceState.IN_CAR -> {
                 wasChargingWhileDriving = false
                 powerDisconnectedWhileStopped = false
@@ -703,8 +716,8 @@ class ExitDetectionService : Service(), SensorEventListener {
             CarPresenceState.EXITED -> {
                 // Read barometer for floor calculation
                 readBarometer()
-                // Save parking spot + floor
-                val loc = lastGpsLocation
+                // Save parking spot at the location where car STOPPED (not current walking position)
+                val loc = locationAtStop ?: lastGpsLocation
                 val parkingFloor = floorDetector.computeFloor()
                 if (loc != null && hasRecentGps()) {
                     saveParkingSpot(LatLng(loc.latitude, loc.longitude), loc.accuracy)
