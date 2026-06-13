@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- MDI garage-check / garage with checkmark -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M20,9.556V3h-2v5.556L12,2 2,9.556V21h8v-2H4v-8.444L12,4.667l8,5.889V12h2V9.556z" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M6,12v7h2v-5h4v-2H6z" />
+    <path
+        android:fillColor="#000000"
+        android:pathData="M17.5,13l-1.41,1.41L18.67,17l-2.58,2.59L17.5,21l4,-4z" />
+</vector>

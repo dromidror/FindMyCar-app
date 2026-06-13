@@ -37,6 +37,11 @@
             android:exported="false"
             android:label="Find My Car" />
 
+        <activity
+            android:name=".DebugActivity"
+            android:exported="false"
+            android:label="Debug" />
+
         <service
             android:name=".ExitDetectionService"
             android:exported="false"
