@@ -20,12 +20,14 @@ class ExitDetectionEngine(
     val stateMachine = CarPresenceStateMachine()
     val floorDetector = FloorDetector()
     val pathAccumulator = PathAccumulator()
+    val parkingHistory = ParkingHistory()
 
     // Motion state
     private var currentMotionState = "CAR_STOPPED"
     private var motionStateStartMs = currentTimeMs()
     private var stopTimestampMs = 0L
     private var locationAtStop: LatLng? = null
+    private val speedBuffer = ArrayDeque<Float>(5)  // last 5 GPS speeds for smoothing
 
     // Steps
     private var stepsSinceStop = 0
@@ -74,6 +76,9 @@ class ExitDetectionEngine(
 
         // Register location listener
         location.onLocationChanged { pos, speedKmh, accuracy ->
+            // Smooth GPS speed to filter drift spikes
+            speedBuffer.addLast(speedKmh)
+            if (speedBuffer.size > 5) speedBuffer.removeFirst()
             onLocationUpdate(pos, speedKmh)
         }
 
@@ -110,6 +115,17 @@ class ExitDetectionEngine(
     fun tick() {
         determineMotionState()
         evaluate()
+
+        // Update debug/UI values in persistence
+        persistence.putString("debug_motion_state", currentMotionState)
+        persistence.putBoolean("debug_gps_available", location.isAvailable())
+        persistence.putFloat("debug_gps_speed", location.getSpeedKmh() ?: 0f)
+        persistence.putInt("debug_steps_since_stop", stepsSinceStop)
+        persistence.putBoolean("debug_bt_connected", carBluetoothConnected)
+        persistence.putFloat("debug_pressure", barometer.getPressureHpa() ?: 0f)
+        val loc = location.getLastLocation()
+        persistence.putFloat("debug_gps_lat", loc?.lat?.toFloat() ?: 0f)
+        persistence.putFloat("debug_gps_lng", loc?.lng?.toFloat() ?: 0f)
     }
 
     // --- Core logic ---
@@ -124,7 +140,11 @@ class ExitDetectionEngine(
         if (stepsActive) {
             newMotionState = "CAR_STOPPED"
         } else if (location.isAvailable()) {
-            val speed = location.getSpeedKmh() ?: 0f
+            val rawSpeed = location.getSpeedKmh() ?: 0f
+            // Use smoothed speed (average of last 5 readings) to filter GPS drift spikes
+            val speed = if (speedBuffer.isNotEmpty()) {
+                var sum = 0f; for (s in speedBuffer) sum += s; sum / speedBuffer.size
+            } else rawSpeed
             // Adaptive GPS rate
             if (speed > 100f && currentGpsIntervalMs != 3000L) {
                 currentGpsIntervalMs = 3000L
@@ -145,7 +165,7 @@ class ExitDetectionEngine(
 
             newMotionState = if (speed < SPEED_STOPPED_THRESHOLD_KMH) "CAR_STOPPED" else "CAR_MOVING"
         } else {
-            // No GPS — use IMU model (placeholder, actual inference done by platform)
+            // No GPS — start IMU for ML model (regardless of BT state)
             imu.start()
             steps.start()
             if (!floorDetector.isCalibrated && currentMotionState == "CAR_MOVING") {
@@ -214,6 +234,7 @@ class ExitDetectionEngine(
             }
             CarPresenceState.EXITED -> {
                 // Read barometer for floor
+                barometer.startContinuous()  // Keep reading for live floor difference display
                 barometer.readOnce { pressure ->
                     floorDetector.addReading(pressure)
                 }
@@ -286,6 +307,13 @@ class ExitDetectionEngine(
         persistence.putFloat("accuracy", accuracy ?: 0f)
         persistence.putLong("timestamp", currentTimeMs())
         persistence.putBoolean("has_gps", true)
+        // Add to history
+        parkingHistory.add(pos.lat, pos.lng, currentTimeMs(), floorDetector.computeFloor(), hasGps = true)
+        // Persist history as simple delimited string
+        val historyStr = parkingHistory.getAll().joinToString(";") { e ->
+            "${e.lat},${e.lng},${e.timestamp},${e.floor ?: ""},${e.hasGps}"
+        }
+        persistence.putString("parking_history", historyStr)
     }
 
     private fun saveParkingNoGps() {

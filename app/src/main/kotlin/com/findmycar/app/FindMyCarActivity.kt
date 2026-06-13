@@ -91,7 +91,49 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
         }
 
         loadParkingSpot()
+        loadParkingHistory()
         startNavigation()
+    }
+
+    private fun loadParkingHistory() {
+        val prefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
+        val historyStr = prefs.getString("parking_history", null) ?: return
+
+        try {
+            val entries = mutableListOf<String>()
+            val positions = mutableListOf<LatLng>()
+
+            historyStr.split(";").forEach { entry ->
+                val parts = entry.split(",")
+                if (parts.size >= 5) {
+                    val lat = parts[0].toDouble()
+                    val lng = parts[1].toDouble()
+                    val ts = parts[2].toLong()
+                    val floor = parts[3].toIntOrNull()
+
+                    positions.add(LatLng(lat, lng))
+                    val elapsed = (System.currentTimeMillis() - ts) / 60_000
+                    val timeStr = if (elapsed < 60) "${elapsed}min ago"
+                        else "${elapsed / 60}h ago"
+                    val floorStr = com.findmycar.shared.formatFloorShort(floor) ?: ""
+                    entries.add("$timeStr ${if (floorStr.isNotEmpty()) "($floorStr)" else ""}")
+                }
+            }
+
+            if (entries.size > 1) {
+                val listView = findViewById<android.widget.ListView>(R.id.parkingListView)
+                val titleView = findViewById<android.widget.TextView>(R.id.navListTitle)
+                titleView.visibility = View.VISIBLE
+                listView.visibility = View.VISIBLE
+                listView.adapter = android.widget.ArrayAdapter(
+                    this, android.R.layout.simple_list_item_single_choice, entries
+                )
+                listView.setItemChecked(0, true)
+                listView.setOnItemClickListener { _, _, pos, _ ->
+                    parkingGps = positions[pos]
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun loadParkingSpot() {

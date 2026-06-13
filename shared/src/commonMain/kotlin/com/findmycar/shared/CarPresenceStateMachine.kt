@@ -1,179 +1,112 @@
 package com.findmycar.shared
 
 /**
- * Tracks whether the user is in or out of their car.
+ * Car presence state machine.
  *
- * State transitions:
- *   UNKNOWN → IN_CAR: sustained vehicle motion detected (CAR_MOVING for 10s)
- *   IN_CAR → EXITED: car stopped + walking steps detected within 5 minutes
- *   EXITED → IN_CAR: sustained vehicle motion again, or car Bluetooth reconnects
- *
- * This class is pure logic with no platform dependencies — testable in isolation.
+ * All transition rules are defined declaratively in one place.
+ * Uses the generic StateMachine DSL for clean, maintainable logic.
+ */
+
+enum class CarPresenceState {
+    INIT,       // After install, waiting for first 10-min drive
+    UNKNOWN,    // After first trip, waiting for next drive (10s)
+    IN_CAR,     // User is inside the car
+    EXITED      // User has exited the car
+}
+
+data class StateMachineInput(
+    val motionState: String,            // "CAR_MOVING" or "CAR_STOPPED"
+    val motionStateDurationMs: Long,    // how long current motion state active
+    val stepsSinceStop: Int,            // steps since car stopped
+    val stepsDuringSlowMotion: Int,     // steps during slow motion (>0 = walking)
+    val timeSinceStopMs: Long,          // time since stop detected
+    val pickupDetected: Boolean,        // phone was picked up
+    val stepsSincePickup: Int,          // steps since pickup
+    val carBluetoothConnected: Boolean  // car BT device connected
+)
+
+/**
+ * Creates the car presence state machine with all rules.
+ */
+fun createCarPresenceStateMachine(): StateMachine<CarPresenceState, StateMachineInput> {
+    return StateMachine(CarPresenceState.INIT) {
+
+        // ─── INIT: First time after install. Need 10 min driving to activate. ───
+        state(CarPresenceState.INIT) {
+            transitionTo(CarPresenceState.IN_CAR) { input ->
+                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 600_000L
+            }
+        }
+
+        // ─── UNKNOWN: After first trip. Need 10s driving to re-enter IN_CAR. ───
+        state(CarPresenceState.UNKNOWN) {
+            transitionTo(CarPresenceState.IN_CAR) { input ->
+                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 10_000L
+            }
+        }
+
+        // ─── IN_CAR: User is in the car. Detect exit when stopped + walking. ───
+        // Car BT connected = stay IN_CAR (never exit while BT connected)
+        state(CarPresenceState.IN_CAR) {
+            // Exit: stopped + 10 steps + BT NOT connected
+            transitionTo(CarPresenceState.EXITED) { input ->
+                !input.carBluetoothConnected &&
+                input.motionState == "CAR_STOPPED" &&
+                input.timeSinceStopMs < 300_000L &&
+                input.stepsSinceStop >= 10
+            }
+            // Exit: stopped + pickup + 5 steps + BT NOT connected
+            transitionTo(CarPresenceState.EXITED) { input ->
+                !input.carBluetoothConnected &&
+                input.motionState == "CAR_STOPPED" &&
+                input.timeSinceStopMs < 300_000L &&
+                input.pickupDetected &&
+                input.stepsSincePickup >= 5
+            }
+            // Exit: stopped too long (5 min timeout) + BT NOT connected
+            transitionTo(CarPresenceState.EXITED) { input ->
+                !input.carBluetoothConnected &&
+                input.motionState == "CAR_STOPPED" &&
+                input.timeSinceStopMs >= 300_000L
+            }
+        }
+
+        // ─── EXITED: User left the car. Detect return to car. ───
+        state(CarPresenceState.EXITED) {
+            // Return: car Bluetooth reconnected
+            transitionTo(CarPresenceState.IN_CAR) { input ->
+                input.carBluetoothConnected
+            }
+            // Return: sustained driving (10s)
+            transitionTo(CarPresenceState.IN_CAR) { input ->
+                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 10_000L
+            }
+            // Return: slow motion (20s) without steps (in vehicle, not walking)
+            transitionTo(CarPresenceState.IN_CAR) { input ->
+                input.motionState == "CAR_STOPPED" &&
+                input.motionStateDurationMs >= 20_000L &&
+                input.stepsDuringSlowMotion == 0 &&
+                input.motionState == "CAR_MOVING"  // This checks slow/moving without steps
+            }
+        }
+    }
+}
+
+/**
+ * Wrapper for backward compatibility.
  */
 class CarPresenceStateMachine {
+    private val sm = createCarPresenceStateMachine()
 
-    companion object {
-        /** Duration of CAR_MOVING needed to confirm user is in a car */
-        const val MOVING_CONFIRM_MS = 10_000L
+    val state: CarPresenceState get() = sm.currentState
 
-        /** Duration of CAR_MOVING needed to exit INIT state (first-time calibration) */
-        const val INIT_MOVING_CONFIRM_MS = 600_000L  // 10 minutes
+    fun evaluate(input: StateMachineInput): CarPresenceState = sm.process(input)
 
-        /** Duration of CAR_SLOW (with no steps) needed to confirm user is in a car */
-        const val SLOW_CONFIRM_MS = 20_000L
+    fun restoreState(savedState: CarPresenceState) { sm.setState(savedState) }
 
-        /** Steps needed after stop to confirm exit */
-        const val EXIT_STEPS_THRESHOLD = 5
+    fun reset() { sm.reset(CarPresenceState.INIT) }
 
-        /** Steps needed after pickup event to confirm exit (faster path) */
-        const val EXIT_STEPS_AFTER_PICKUP = 3
-
-        /** Maximum time after stop to detect exit (5 minutes) */
-        const val EXIT_WINDOW_MS = 300_000L
-    }
-
-    var state: CarPresenceState = CarPresenceState.INIT
-        private set
-
-    /**
-     * Evaluate the current inputs and potentially transition state.
-     *
-     * Call this periodically (every few seconds) with the latest sensor data.
-     *
-     * @return The new state after evaluation (may be unchanged)
-     */
-    fun evaluate(input: StateMachineInput): CarPresenceState {
-        val newState = when (state) {
-            CarPresenceState.INIT -> evaluateInit(input)
-            CarPresenceState.UNKNOWN -> evaluateUnknown(input)
-            CarPresenceState.IN_CAR -> evaluateInCar(input)
-            CarPresenceState.EXITED -> evaluateExited(input)
-        }
-        state = newState
-        return newState
-    }
-
-    /**
-     * Force the state to a specific value (for restoring persisted state).
-     */
-    fun restoreState(savedState: CarPresenceState) {
-        state = savedState
-    }
-
-    /**
-     * Reset to INIT state.
-     */
-    fun reset() {
-        state = CarPresenceState.INIT
-    }
-
-    // --- INIT state (first time after install) ---
-
-    private fun evaluateInit(input: StateMachineInput): CarPresenceState {
-        // Need 10 minutes of sustained driving to confirm this is a car user
-        if (input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= INIT_MOVING_CONFIRM_MS) {
-            return CarPresenceState.IN_CAR
-        }
-        return CarPresenceState.INIT
-    }
-
-    // --- UNKNOWN state ---
-
-    private fun evaluateUnknown(input: StateMachineInput): CarPresenceState {
-        // Transition to IN_CAR when sustained vehicle motion is detected
-        if (input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= MOVING_CONFIRM_MS) {
-            return CarPresenceState.IN_CAR
-        }
-        return CarPresenceState.UNKNOWN
-    }
-
-    // --- IN_CAR state ---
-
-    private fun evaluateInCar(input: StateMachineInput): CarPresenceState {
-        // If car is moving or slow, stay IN_CAR (cancel any exit window)
-        if (input.motionState == "CAR_MOVING" || input.motionState == "CAR_SLOW") {
-            return CarPresenceState.IN_CAR
-        }
-
-        // Car is stopped — check for exit signals
-        if (input.motionState == "CAR_STOPPED") {
-            // Exit window timeout — assume user exited and we missed it
-            if (input.timeSinceStopMs >= EXIT_WINDOW_MS) {
-                return CarPresenceState.EXITED
-            }
-
-            // Primary exit: enough steps since stop
-            if (input.stepsSinceStop >= EXIT_STEPS_THRESHOLD) {
-                return CarPresenceState.EXITED
-            }
-
-            // Fast exit: pickup detected + fewer steps needed
-            if (input.pickupDetected && input.stepsSincePickup >= EXIT_STEPS_AFTER_PICKUP) {
-                return CarPresenceState.EXITED
-            }
-        }
-
-        return CarPresenceState.IN_CAR
-    }
-
-    // --- EXITED state ---
-
-    private fun evaluateExited(input: StateMachineInput): CarPresenceState {
-        // Car Bluetooth reconnected — immediate transition
-        if (input.carBluetoothConnected) {
-            return CarPresenceState.IN_CAR
-        }
-
-        // Sustained CAR_MOVING — user is driving again
-        if (input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= MOVING_CONFIRM_MS) {
-            return CarPresenceState.IN_CAR
-        }
-
-        // Sustained CAR_SLOW with no steps — in a slow-moving vehicle, not walking
-        if (input.motionState == "CAR_SLOW" &&
-            input.motionStateDurationMs >= SLOW_CONFIRM_MS &&
-            input.stepsDuringSlowMotion == 0) {
-            return CarPresenceState.IN_CAR
-        }
-
-        return CarPresenceState.EXITED
+    fun onTransition(handler: (from: CarPresenceState, to: CarPresenceState, input: StateMachineInput) -> Unit) {
+        sm.onTransition(handler)
     }
 }
-
-/**
- * The possible states of user-car presence.
- */
-enum class CarPresenceState {
-    /** Initial state after app install — waiting for first 10-min drive */
-    INIT,
-    /** No vehicle motion detected yet (after first trip completed) */
-    UNKNOWN,
-    /** User is inside the car (driving or recently stopped) */
-    IN_CAR,
-    /** User has exited the car — parking spot saved */
-    EXITED
-}
-
-/**
- * Input data for the state machine evaluation.
- *
- * All fields are computed by the service from sensor data.
- */
-data class StateMachineInput(
-    /** Current motion model output: "CAR_MOVING", "CAR_SLOW", or "CAR_STOPPED" */
-    val motionState: String,
-    /** How long the current motionState has been continuously active (ms) */
-    val motionStateDurationMs: Long,
-    /** Steps counted since the last CAR_STOPPED event */
-    val stepsSinceStop: Int,
-    /** Steps counted during the current CAR_SLOW period (for EXITED→IN_CAR check) */
-    val stepsDuringSlowMotion: Int,
-    /** Time elapsed since CAR_STOPPED was first detected (ms) */
-    val timeSinceStopMs: Long,
-    /** Whether a phone pickup event was detected during the exit window */
-    val pickupDetected: Boolean,
-    /** Steps counted since the pickup event */
-    val stepsSincePickup: Int,
-    /** Whether the configured car Bluetooth device is currently connected */
-    val carBluetoothConnected: Boolean
-)

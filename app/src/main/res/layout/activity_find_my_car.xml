@@ -15,6 +15,25 @@
         android:gravity="center"
         android:padding="24dp">
 
+        <!-- Recent parking list (selectable) -->
+        <TextView
+            android:id="@+id/navListTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Select parking location:"
+            android:textColor="#888888"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <ListView
+            android:id="@+id/parkingListView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxHeight="120dp"
+            android:choiceMode="singleChoice"
+            android:visibility="gone"
+            android:layout_marginBottom="8dp" />
+
         <!-- Arrow pointing to car -->
         <ImageView
             android:id="@+id/navArrow"
