@@ -90,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         testLogButton.setOnClickListener { toggleLogging() }
         carExitButton.setOnClickListener { markCarExit() }
         findViewById<MaterialButton>(R.id.clearLogsButton).setOnClickListener { clearLogs() }
+        findViewById<MaterialButton>(R.id.resetStateButton).setOnClickListener { resetAllState() }
 
         // Debug toggle
         val debugToggle = findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.debugToggle)
@@ -303,5 +304,12 @@ class MainActivity : AppCompatActivity() {
         var count = 0
         logDir.listFiles()?.forEach { it.delete(); count++ }
         android.widget.Toast.makeText(this, "Cleared $count log file(s)", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    private fun resetAllState() {
+        getSharedPreferences("exit_detection_state", MODE_PRIVATE).edit().clear().apply()
+        getSharedPreferences("parking_spot", MODE_PRIVATE).edit().clear().apply()
+        android.widget.Toast.makeText(this, "State & parking data cleared", android.widget.Toast.LENGTH_SHORT).show()
+        updateDisplay()
     }
 }

@@ -133,6 +133,27 @@ class ExitDetectionEngine(
     private fun determineMotionState() {
         val newMotionState: String
 
+        // In EXITED state, don't actively detect motion — wait for GPS to show real driving
+        if (stateMachine.state == CarPresenceState.EXITED) {
+            // Only transition out of EXITED via GPS showing sustained high speed
+            if (location.isAvailable()) {
+                val speed = location.getSpeedKmh() ?: 0f
+                if (speed >= 15f) {
+                    newMotionState = "CAR_MOVING"
+                } else {
+                    return  // Stay in EXITED, don't change motion state
+                }
+            } else {
+                return  // No GPS in EXITED = do nothing
+            }
+            if (newMotionState != currentMotionState) {
+                onMotionStateChanged(currentMotionState, newMotionState)
+                currentMotionState = newMotionState
+                motionStateStartMs = currentTimeMs()
+            }
+            return
+        }
+
         // Walking check
         val stepsActive = stepsSinceStop > 0 && (currentTimeMs() - lastStepTimeMs) < 3000L
         if (!stepsActive) isWalking = false

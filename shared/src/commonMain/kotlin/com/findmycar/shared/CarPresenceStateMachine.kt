@@ -77,16 +77,11 @@ fun createCarPresenceStateMachine(): StateMachine<CarPresenceState, StateMachine
             transitionTo(CarPresenceState.IN_CAR) { input ->
                 input.carBluetoothConnected
             }
-            // Return: sustained driving (10s)
+            // Return: sustained driving (30s) — must be real driving, not GPS drift
             transitionTo(CarPresenceState.IN_CAR) { input ->
-                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 10_000L
-            }
-            // Return: slow motion (20s) without steps (in vehicle, not walking)
-            transitionTo(CarPresenceState.IN_CAR) { input ->
-                input.motionState == "CAR_STOPPED" &&
-                input.motionStateDurationMs >= 20_000L &&
-                input.stepsDuringSlowMotion == 0 &&
-                input.motionState == "CAR_MOVING"  // This checks slow/moving without steps
+                input.motionState == "CAR_MOVING" &&
+                input.motionStateDurationMs >= 30_000L &&
+                input.stepsDuringSlowMotion == 0  // not walking
             }
         }
     }
