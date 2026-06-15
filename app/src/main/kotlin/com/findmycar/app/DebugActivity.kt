@@ -1,26 +1,32 @@
 package com.findmycar.app
 
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.findmycar.shared.StateMachineLog
 import com.google.android.material.button.MaterialButton
 import java.io.File
 
 class DebugActivity : AppCompatActivity() {
 
     private lateinit var debugIndicators: TextView
+    private lateinit var smLogText: TextView
+    private lateinit var smLogScrollView: ScrollView
     private lateinit var testLogButton: MaterialButton
     private var logging = false
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var lastLogSize = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_debug)
 
         debugIndicators = findViewById(R.id.debugIndicators)
+        smLogText = findViewById(R.id.smLogText)
+        smLogScrollView = findViewById(R.id.smLogScrollView)
         testLogButton = findViewById(R.id.testLogButton)
 
         testLogButton.setOnClickListener { toggleLogging() }
@@ -42,6 +48,7 @@ class DebugActivity : AppCompatActivity() {
     private val refreshRunnable = object : Runnable {
         override fun run() {
             updateDebugIndicators()
+            updateStateMachineLog()
             refreshHandler.postDelayed(this, 2000L)
         }
     }
@@ -71,6 +78,33 @@ class DebugActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateStateMachineLog() {
+        val currentSize = StateMachineLog.size()
+        if (currentSize == lastLogSize) return  // No new entries
+        lastLogSize = currentSize
+
+        val entries = StateMachineLog.getAll()
+        val sb = StringBuilder()
+        for (entry in entries) {
+            val state = entry.state.padEnd(8)
+            val src = entry.source.padEnd(6)
+            val cnt = entry.counter.padEnd(6)
+            val motion = entry.motionState.padEnd(13)
+            val pickup = when (entry.pickup) {
+                true -> "true "
+                false -> "false"
+                null -> "  -  "
+            }
+            val time = entry.timeInState.padEnd(6)
+            val trans = entry.transition ?: "-"
+            sb.appendLine("$state $src $cnt $motion $pickup $time $trans")
+        }
+        smLogText.text = sb.toString()
+
+        // Auto-scroll to bottom
+        smLogScrollView.post { smLogScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
     private fun toggleLogging() {
         logging = !logging
         val intent = Intent(ExitDetectionService.ACTION_TOGGLE_LOGGING).apply {
@@ -93,7 +127,10 @@ class DebugActivity : AppCompatActivity() {
         val logDir = File(getExternalFilesDir(null) ?: filesDir, "test_logs")
         var count = 0
         logDir.listFiles()?.forEach { it.delete(); count++ }
-        Toast.makeText(this, "Cleared $count log file(s)", Toast.LENGTH_SHORT).show()
+        StateMachineLog.clear()
+        lastLogSize = 0
+        smLogText.text = ""
+        Toast.makeText(this, "Cleared $count log file(s) + SM log", Toast.LENGTH_SHORT).show()
     }
 
     private fun resetAllState() {

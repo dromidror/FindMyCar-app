@@ -231,9 +231,65 @@ class ExitDetectionEngine(
         val oldState = stateMachine.state
         val newState = stateMachine.evaluate(input)
 
+        // Log to state machine debug console
+        val source = determineEventSource()
+        val counter = determineCounter(source)
+        val timeInState = formatDuration(now - motionStateStartMs)
+        val transition = if (newState != oldState) newState.name else null
+
+        StateMachineLog.add(StateMachineLog.Entry(
+            state = oldState.name,
+            source = source,
+            counter = counter,
+            motionState = currentMotionState,
+            pickup = if (oldState == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED")
+                pickupDetected else null,
+            timeInState = timeInState,
+            transition = transition
+        ))
+
         if (newState != oldState) {
             onStateTransition(StateTransition(oldState, newState))
         }
+    }
+
+    /**
+     * Determine what triggered this evaluation for the debug log.
+     */
+    private fun determineEventSource(): String {
+        return when {
+            carBluetoothConnected -> "BT"
+            stepsSinceStop > 0 && isWalking -> "steps"
+            location.isAvailable() -> "GPS"
+            else -> "tick"
+        }
+    }
+
+    /**
+     * Get the relevant counter value for the event source.
+     */
+    private fun determineCounter(source: String): String {
+        return when (source) {
+            "GPS" -> {
+                val speed = location.getSpeedKmh() ?: 0f
+                val intPart = speed.toInt()
+                val decPart = ((speed - intPart) * 10).toInt()
+                "$intPart.$decPart"
+            }
+            "steps" -> "$stepsSinceStop"
+            "BT" -> if (carBluetoothConnected) "conn" else "disc"
+            else -> "-"
+        }
+    }
+
+    /**
+     * Format milliseconds to mm:ss for the debug log.
+     */
+    private fun formatDuration(ms: Long): String {
+        val totalSec = ms / 1000
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return "${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}"
     }
 
     private fun onStateTransition(transition: StateTransition) {
