@@ -88,15 +88,33 @@
         </LinearLayout>
 
         <!-- State Machine Log -->
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="State Machine"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="#FFFFFF"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginTop="20dp"
-            android:layout_marginBottom="8dp" />
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="State Machine"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/smToggleButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="▶ Start"
+                android:textSize="12sp"
+                app:backgroundTint="#4CAF50"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.Material3.Button" />
+        </LinearLayout>
 
         <!-- Table header -->
         <TextView
@@ -116,7 +134,7 @@
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="8dp">
 
             <ScrollView
                 android:id="@+id/smLogScrollView"
@@ -136,6 +154,37 @@
                     android:lineSpacingExtra="2dp" />
             </ScrollView>
         </HorizontalScrollView>
+
+        <!-- Save / Clean buttons for SM log -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/smSaveButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Save Log"
+                android:textSize="13sp"
+                app:backgroundTint="#4CAF50"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.Material3.Button" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/smCleanButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Clean"
+                android:textSize="13sp"
+                android:layout_marginStart="8dp"
+                app:backgroundTint="#607D8B"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.Material3.Button" />
+        </LinearLayout>
 
     </LinearLayout>
 </ScrollView>

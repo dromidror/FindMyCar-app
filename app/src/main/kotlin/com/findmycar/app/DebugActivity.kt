@@ -15,6 +15,7 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var debugIndicators: TextView
     private lateinit var smLogText: TextView
     private lateinit var smLogScrollView: ScrollView
+    private lateinit var smToggleButton: MaterialButton
     private lateinit var testLogButton: MaterialButton
     private var logging = false
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -27,12 +28,16 @@ class DebugActivity : AppCompatActivity() {
         debugIndicators = findViewById(R.id.debugIndicators)
         smLogText = findViewById(R.id.smLogText)
         smLogScrollView = findViewById(R.id.smLogScrollView)
+        smToggleButton = findViewById(R.id.smToggleButton)
         testLogButton = findViewById(R.id.testLogButton)
 
+        smToggleButton.setOnClickListener { toggleSmLog() }
         testLogButton.setOnClickListener { toggleLogging() }
         findViewById<MaterialButton>(R.id.carExitButton).setOnClickListener { markCarExit() }
         findViewById<MaterialButton>(R.id.clearLogsButton).setOnClickListener { clearLogs() }
         findViewById<MaterialButton>(R.id.resetStateButton).setOnClickListener { resetAllState() }
+        findViewById<MaterialButton>(R.id.smSaveButton).setOnClickListener { saveSmLog() }
+        findViewById<MaterialButton>(R.id.smCleanButton).setOnClickListener { cleanSmConsole() }
     }
 
     override fun onResume() {
@@ -115,6 +120,17 @@ class DebugActivity : AppCompatActivity() {
         testLogButton.text = if (logging) "Stop Log" else "Start Log"
     }
 
+    private fun toggleSmLog() {
+        StateMachineLog.enabled = !StateMachineLog.enabled
+        if (StateMachineLog.enabled) {
+            smToggleButton.text = "⏹ Stop"
+            smToggleButton.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFF44336.toInt())
+        } else {
+            smToggleButton.text = "▶ Start"
+            smToggleButton.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF4CAF50.toInt())
+        }
+    }
+
     private fun markCarExit() {
         val intent = Intent(ExitDetectionService.ACTION_USER_CAR_EXIT).apply {
             setPackage(packageName)
@@ -131,6 +147,43 @@ class DebugActivity : AppCompatActivity() {
         lastLogSize = 0
         smLogText.text = ""
         Toast.makeText(this, "Cleared $count log file(s) + SM log", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveSmLog() {
+        val entries = StateMachineLog.getAll()
+        if (entries.isEmpty()) {
+            Toast.makeText(this, "No log entries to save", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val logDir = File(getExternalFilesDir(null) ?: filesDir, "sm_logs")
+        logDir.mkdirs()
+
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val file = File(logDir, "sm_log_$timestamp.csv")
+
+        file.bufferedWriter().use { writer ->
+            writer.appendLine("state,source,counter,motion_state,pickup,time_in_state,transition")
+            for (entry in entries) {
+                val pickup = when (entry.pickup) {
+                    true -> "true"
+                    false -> "false"
+                    null -> ""
+                }
+                val transition = entry.transition ?: ""
+                writer.appendLine("${entry.state},${entry.source},${entry.counter},${entry.motionState},$pickup,${entry.timeInState},$transition")
+            }
+        }
+
+        Toast.makeText(this, "Saved ${entries.size} entries → ${file.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun cleanSmConsole() {
+        StateMachineLog.clear()
+        lastLogSize = 0
+        smLogText.text = ""
+        Toast.makeText(this, "Console cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun resetAllState() {

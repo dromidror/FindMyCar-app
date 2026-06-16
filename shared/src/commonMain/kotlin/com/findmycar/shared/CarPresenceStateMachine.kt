@@ -17,6 +17,7 @@ enum class CarPresenceState {
 data class StateMachineInput(
     val motionState: String,            // "CAR_MOVING" or "CAR_STOPPED"
     val motionStateDurationMs: Long,    // how long current motion state active
+    val cumulativeMovingMs: Long,       // total accumulated driving time (survives brief stops)
     val stepsSinceStop: Int,            // steps since car stopped
     val stepsDuringSlowMotion: Int,     // steps during slow motion (>0 = walking)
     val timeSinceStopMs: Long,          // time since stop detected
@@ -28,20 +29,28 @@ data class StateMachineInput(
 /**
  * Creates the car presence state machine with all rules.
  */
+private const val INIT_DRIVING_THRESHOLD_MS = 120_000L      // 2 min cumulative driving to leave INIT
+private const val UNKNOWN_DRIVING_THRESHOLD_MS = 10_000L    // 10s driving to re-enter IN_CAR
+private const val STOP_TIMEOUT_MS = 300_000L                // 5 min stopped = forced exit
+private const val EXIT_STEPS_THRESHOLD = 10                 // steps to confirm walking away
+private const val EXIT_PICKUP_STEPS_THRESHOLD = 5           // steps after pickup to confirm exit
+private const val NO_SLOW_MOTION_STEPS = 0                  // no walking during driving
+private const val EXITED_RETURN_DRIVING_MS = 30_000L        // 30s sustained driving to re-enter car
+
 fun createCarPresenceStateMachine(): StateMachine<CarPresenceState, StateMachineInput> {
     return StateMachine(CarPresenceState.INIT) {
 
-        // ─── INIT: First time after install. Need 10 min driving to activate. ───
+        // ─── INIT: First time after install. Need 2 min driving to activate. ───
         state(CarPresenceState.INIT) {
             transitionTo(CarPresenceState.IN_CAR) { input ->
-                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 600_000L
+                input.motionState == "CAR_MOVING" && input.cumulativeMovingMs >= INIT_DRIVING_THRESHOLD_MS
             }
         }
 
         // ─── UNKNOWN: After first trip. Need 10s driving to re-enter IN_CAR. ───
         state(CarPresenceState.UNKNOWN) {
             transitionTo(CarPresenceState.IN_CAR) { input ->
-                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= 10_000L
+                input.motionState == "CAR_MOVING" && input.motionStateDurationMs >= UNKNOWN_DRIVING_THRESHOLD_MS
             }
         }
 
@@ -52,22 +61,22 @@ fun createCarPresenceStateMachine(): StateMachine<CarPresenceState, StateMachine
             transitionTo(CarPresenceState.EXITED) { input ->
                 !input.carBluetoothConnected &&
                 input.motionState == "CAR_STOPPED" &&
-                input.timeSinceStopMs < 300_000L &&
-                input.stepsSinceStop >= 10
+                input.timeSinceStopMs < STOP_TIMEOUT_MS &&
+                input.stepsSinceStop >= EXIT_STEPS_THRESHOLD
             }
             // Exit: stopped + pickup + 5 steps + BT NOT connected
             transitionTo(CarPresenceState.EXITED) { input ->
                 !input.carBluetoothConnected &&
                 input.motionState == "CAR_STOPPED" &&
-                input.timeSinceStopMs < 300_000L &&
+                input.timeSinceStopMs < STOP_TIMEOUT_MS &&
                 input.pickupDetected &&
-                input.stepsSincePickup >= 5
+                input.stepsSincePickup >= EXIT_PICKUP_STEPS_THRESHOLD
             }
             // Exit: stopped too long (5 min timeout) + BT NOT connected
             transitionTo(CarPresenceState.EXITED) { input ->
                 !input.carBluetoothConnected &&
                 input.motionState == "CAR_STOPPED" &&
-                input.timeSinceStopMs >= 300_000L
+                input.timeSinceStopMs >= STOP_TIMEOUT_MS
             }
         }
 
@@ -80,8 +89,8 @@ fun createCarPresenceStateMachine(): StateMachine<CarPresenceState, StateMachine
             // Return: sustained driving (30s) — must be real driving, not GPS drift
             transitionTo(CarPresenceState.IN_CAR) { input ->
                 input.motionState == "CAR_MOVING" &&
-                input.motionStateDurationMs >= 30_000L &&
-                input.stepsDuringSlowMotion == 0  // not walking
+                input.motionStateDurationMs >= EXITED_RETURN_DRIVING_MS &&
+                input.stepsDuringSlowMotion == NO_SLOW_MOTION_STEPS
             }
         }
     }

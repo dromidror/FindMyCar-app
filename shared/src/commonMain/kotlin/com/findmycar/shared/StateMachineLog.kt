@@ -21,7 +21,10 @@ object StateMachineLog {
     private val entries = mutableListOf<Entry>()
     private const val MAX_ENTRIES = 200
 
+    var enabled = false
+
     fun add(entry: Entry) {
+        if (!enabled) return
         entries.add(entry)
         if (entries.size > MAX_ENTRIES) {
             entries.removeAt(0)

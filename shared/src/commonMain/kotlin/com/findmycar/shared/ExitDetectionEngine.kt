@@ -28,6 +28,8 @@ class ExitDetectionEngine(
     private var stopTimestampMs = 0L
     private var locationAtStop: LatLng? = null
     private val speedBuffer = ArrayDeque<Float>(5)  // last 5 GPS speeds for smoothing
+    private var cumulativeMovingMs = 0L             // total time in CAR_MOVING (for INIT→IN_CAR)
+    private var lastTickMs = currentTimeMs()
 
     // Steps
     private var stepsSinceStop = 0
@@ -49,6 +51,7 @@ class ExitDetectionEngine(
         private const val GPS_STALE_MS = 10_000L
         private const val SPEED_STOPPED_THRESHOLD_KMH = 1.0f
         private const val INFERENCE_INTERVAL_MS = 5000L
+        private const val GPS_INTERVAL_EXITED_MS = 60_000L
     }
 
     /**
@@ -113,6 +116,14 @@ class ExitDetectionEngine(
      * Called periodically (every 5 seconds) by the platform timer.
      */
     fun tick() {
+        val now = currentTimeMs()
+
+        // Accumulate driving time for INIT→IN_CAR transition
+        if (currentMotionState == "CAR_MOVING") {
+            cumulativeMovingMs += (now - lastTickMs)
+        }
+        lastTickMs = now
+
         determineMotionState()
         evaluate()
 
@@ -154,11 +165,19 @@ class ExitDetectionEngine(
             return
         }
 
-        // Walking check
+        // Walking check — only relevant at low GPS speed.
+        // At driving speed, step sensor fires from vehicle vibration (bus/car bumps).
+        val gpsSpeed = if (location.isAvailable()) {
+            if (speedBuffer.isNotEmpty()) {
+                var sum = 0f; for (s in speedBuffer) sum += s; sum / speedBuffer.size
+            } else location.getSpeedKmh() ?: 0f
+        } else 0f
+
         val stepsActive = stepsSinceStop > 0 && (currentTimeMs() - lastStepTimeMs) < 3000L
         if (!stepsActive) isWalking = false
 
-        if (stepsActive) {
+        if (stepsActive && gpsSpeed < 5f) {
+            // Steps at low speed = walking (not vehicle vibration)
             newMotionState = "CAR_STOPPED"
         } else if (location.isAvailable()) {
             val rawSpeed = location.getSpeedKmh() ?: 0f
@@ -220,6 +239,7 @@ class ExitDetectionEngine(
         val input = StateMachineInput(
             motionState = currentMotionState,
             motionStateDurationMs = now - motionStateStartMs,
+            cumulativeMovingMs = cumulativeMovingMs,
             stepsSinceStop = stepsSinceStop,
             stepsDuringSlowMotion = if (isWalking) 1 else 0,
             timeSinceStopMs = if (stopTimestampMs > 0) now - stopTimestampMs else 0,
@@ -334,8 +354,8 @@ class ExitDetectionEngine(
                 // Enter low-power mode
                 imu.stop()
                 steps.start()  // Keep for "return to car" detection
-                currentGpsIntervalMs = 60_000L
-                location.setInterval(60_000L)
+                currentGpsIntervalMs = GPS_INTERVAL_EXITED_MS
+                location.setInterval(GPS_INTERVAL_EXITED_MS)
 
                 val floorLabel = formatFloorShort(parkingFloor) ?: ""
                 notification.update("🅿️ Car parked${if (floorLabel.isNotEmpty()) " ($floorLabel)" else ""}")
