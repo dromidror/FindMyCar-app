@@ -48,10 +48,11 @@ class ExitDetectionEngine(
     private var currentGpsIntervalMs = 1000L
 
     companion object {
-        private const val GPS_STALE_MS = 10_000L
+        private const val GPS_STALE_MS = 15_000L
         private const val SPEED_STOPPED_THRESHOLD_KMH = 1.0f
+        private const val SPEED_DRIVING_THRESHOLD_KMH = 10.0f  // minimum speed to count as driving (not walking)
         private const val INFERENCE_INTERVAL_MS = 5000L
-        private const val GPS_INTERVAL_EXITED_MS = 60_000L
+        private const val GPS_INTERVAL_EXITED_MS = 10_000L  // 10s — must detect driving to re-enter car
     }
 
     /**
@@ -118,9 +119,12 @@ class ExitDetectionEngine(
     fun tick() {
         val now = currentTimeMs()
 
-        // Accumulate driving time for INIT→IN_CAR transition
+        // Accumulate driving time for INIT→IN_CAR transition — only at real driving speed
         if (currentMotionState == "CAR_MOVING") {
-            cumulativeMovingMs += (now - lastTickMs)
+            val speed = location.getSpeedKmh() ?: 0f
+            if (speed >= SPEED_DRIVING_THRESHOLD_KMH) {
+                cumulativeMovingMs += (now - lastTickMs)
+            }
         }
         lastTickMs = now
 
@@ -152,10 +156,22 @@ class ExitDetectionEngine(
                 if (speed >= 15f) {
                     newMotionState = "CAR_MOVING"
                 } else {
-                    return  // Stay in EXITED, don't change motion state
+                    // Low speed in EXITED — ensure state is STOPPED so duration resets
+                    if (currentMotionState != "CAR_STOPPED") {
+                        onMotionStateChanged(currentMotionState, "CAR_STOPPED")
+                        currentMotionState = "CAR_STOPPED"
+                        motionStateStartMs = currentTimeMs()
+                    }
+                    return
                 }
             } else {
-                return  // No GPS in EXITED = do nothing
+                // No GPS in EXITED — ensure state is STOPPED
+                if (currentMotionState != "CAR_STOPPED") {
+                    onMotionStateChanged(currentMotionState, "CAR_STOPPED")
+                    currentMotionState = "CAR_STOPPED"
+                    motionStateStartMs = currentTimeMs()
+                }
+                return
             }
             if (newMotionState != currentMotionState) {
                 onMotionStateChanged(currentMotionState, newMotionState)
@@ -176,8 +192,8 @@ class ExitDetectionEngine(
         val stepsActive = stepsSinceStop > 0 && (currentTimeMs() - lastStepTimeMs) < 3000L
         if (!stepsActive) isWalking = false
 
-        if (stepsActive && gpsSpeed < 5f) {
-            // Steps at low speed = walking (not vehicle vibration)
+        if (stepsActive && gpsSpeed < SPEED_DRIVING_THRESHOLD_KMH) {
+            // Steps below driving speed = walking (not vehicle vibration)
             newMotionState = "CAR_STOPPED"
         } else if (location.isAvailable()) {
             val rawSpeed = location.getSpeedKmh() ?: 0f
@@ -196,9 +212,12 @@ class ExitDetectionEngine(
             }
 
             if (speed >= 10f) {
-                // Fast driving — stop IMU
+                // Fast driving — stop IMU, reset step counters (vibration steps don't count)
                 imu.stop()
                 steps.stop()
+                stepsSinceStop = 0
+                stepsSincePickup = 0
+                isWalking = false
             } else {
                 steps.start()
             }
@@ -236,12 +255,17 @@ class ExitDetectionEngine(
 
     private fun evaluate() {
         val now = currentTimeMs()
+        // Steps at driving speed are vibration, not walking.
+        // When GPS is unavailable, we can't confirm walking — don't block transitions.
+        val gpsSpeed = location.getSpeedKmh()  // null if GPS stale
+        val reallyWalking = isWalking && gpsSpeed != null && gpsSpeed < SPEED_DRIVING_THRESHOLD_KMH
+
         val input = StateMachineInput(
             motionState = currentMotionState,
             motionStateDurationMs = now - motionStateStartMs,
             cumulativeMovingMs = cumulativeMovingMs,
             stepsSinceStop = stepsSinceStop,
-            stepsDuringSlowMotion = if (isWalking) 1 else 0,
+            stepsDuringSlowMotion = if (reallyWalking) 1 else 0,
             timeSinceStopMs = if (stopTimestampMs > 0) now - stopTimestampMs else 0,
             pickupDetected = pickupDetected,
             stepsSincePickup = stepsSincePickup,
@@ -262,6 +286,7 @@ class ExitDetectionEngine(
             source = source,
             counter = counter,
             motionState = currentMotionState,
+            steps = stepsSinceStop,
             pickup = if (oldState == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED")
                 pickupDetected else null,
             timeInState = timeInState,
@@ -279,7 +304,6 @@ class ExitDetectionEngine(
     private fun determineEventSource(): String {
         return when {
             carBluetoothConnected -> "BT"
-            stepsSinceStop > 0 && isWalking -> "steps"
             location.isAvailable() -> "GPS"
             else -> "tick"
         }
@@ -296,7 +320,6 @@ class ExitDetectionEngine(
                 val decPart = ((speed - intPart) * 10).toInt()
                 "$intPart.$decPart"
             }
-            "steps" -> "$stepsSinceStop"
             "BT" -> if (carBluetoothConnected) "conn" else "disc"
             else -> "-"
         }

@@ -95,6 +95,7 @@ class DebugActivity : AppCompatActivity() {
             val src = entry.source.padEnd(6)
             val cnt = entry.counter.padEnd(6)
             val motion = entry.motionState.padEnd(13)
+            val steps = entry.steps.toString().padEnd(4)
             val pickup = when (entry.pickup) {
                 true -> "true "
                 false -> "false"
@@ -102,7 +103,7 @@ class DebugActivity : AppCompatActivity() {
             }
             val time = entry.timeInState.padEnd(6)
             val trans = entry.transition ?: "-"
-            sb.appendLine("$state $src $cnt $motion $pickup $time $trans")
+            sb.appendLine("$state $src $cnt $motion $steps $pickup $time $trans")
         }
         smLogText.text = sb.toString()
 
@@ -164,7 +165,7 @@ class DebugActivity : AppCompatActivity() {
         val file = File(logDir, "sm_log_$timestamp.csv")
 
         file.bufferedWriter().use { writer ->
-            writer.appendLine("state,source,counter,motion_state,pickup,time_in_state,transition")
+            writer.appendLine("state,source,counter,motion_state,steps,pickup,time_in_state,transition")
             for (entry in entries) {
                 val pickup = when (entry.pickup) {
                     true -> "true"
@@ -172,7 +173,7 @@ class DebugActivity : AppCompatActivity() {
                     null -> ""
                 }
                 val transition = entry.transition ?: ""
-                writer.appendLine("${entry.state},${entry.source},${entry.counter},${entry.motionState},$pickup,${entry.timeInState},$transition")
+                writer.appendLine("${entry.state},${entry.source},${entry.counter},${entry.motionState},${entry.steps},$pickup,${entry.timeInState},$transition")
             }
         }
 

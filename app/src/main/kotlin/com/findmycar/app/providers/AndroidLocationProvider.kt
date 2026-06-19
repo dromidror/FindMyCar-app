@@ -51,7 +51,7 @@ class AndroidLocationProvider(
     }
 
     override fun isAvailable(): Boolean {
-        return lastFixTimeMs > 0 && (System.currentTimeMillis() - lastFixTimeMs) < 10_000L
+        return lastFixTimeMs > 0 && (System.currentTimeMillis() - lastFixTimeMs) < 15_000L
     }
 
     @SuppressLint("MissingPermission")

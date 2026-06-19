@@ -121,7 +121,7 @@
             android:id="@+id/smLogHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="STATE      SRC    CNT    MOTION        PICKUP  TIME   → NEW"
+            android:text="STATE      SRC    CNT    MOTION        STPS PICKUP  TIME   → NEW"
             android:textSize="10sp"
             android:fontFamily="monospace"
             android:textColor="#888888"

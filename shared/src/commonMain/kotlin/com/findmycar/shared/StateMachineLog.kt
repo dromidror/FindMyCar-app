@@ -13,6 +13,7 @@ object StateMachineLog {
         val source: String,         // event source (e.g. "GPS", "steps", "BT")
         val counter: String,        // relevant counter (e.g. speed "60.0", steps "10")
         val motionState: String,    // "CAR_MOVING" / "CAR_STOPPED"
+        val steps: Int,             // steps since stop
         val pickup: Boolean?,       // pickup detected (null if not relevant)
         val timeInState: String,    // formatted duration (mm:ss)
         val transition: String?     // new state or null ("-")
