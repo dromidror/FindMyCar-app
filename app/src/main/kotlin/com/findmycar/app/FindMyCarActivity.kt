@@ -137,7 +137,7 @@ class FindMyCarActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun loadParkingSpot() {
-        val prefs = getSharedPreferences("parking_spot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
         val hasGps = prefs.getBoolean("has_gps", false)
         if (hasGps) {
             val lat = prefs.getFloat("latitude", 0f).toDouble()

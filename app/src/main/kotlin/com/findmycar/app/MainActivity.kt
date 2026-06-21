@@ -137,7 +137,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateDisplay() {
         val statePrefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
         val state = statePrefs.getString("presence_state", "INIT") ?: "INIT"
-        val parkingPrefs = getSharedPreferences("parking_spot", MODE_PRIVATE)
+        val parkingPrefs = statePrefs  // parking data is stored in the same prefs
         val parkingTimestamp = parkingPrefs.getLong("timestamp", 0L)
 
         when (state) {
