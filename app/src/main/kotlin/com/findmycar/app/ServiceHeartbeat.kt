@@ -29,12 +29,42 @@ class ServiceHeartbeat : BroadcastReceiver() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // setExactAndAllowWhileIdle works in Doze mode
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
-                pendingIntent
-            )
+            try {
+                // On Android 12+ (API 31), check if exact alarms are allowed
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExactAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
+                            pendingIntent
+                        )
+                    } else {
+                        // Fallback: inexact alarm (still works, just less precise)
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
+                            pendingIntent
+                        )
+                    }
+                } else {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
+                        pendingIntent
+                    )
+                }
+            } catch (_: SecurityException) {
+                // Permission not granted — fall back to inexact alarm
+                try {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
+                        pendingIntent
+                    )
+                } catch (_: Exception) {
+                    // If even this fails, silently skip — service will rely on other restart mechanisms
+                }
+            }
         }
 
         /** Cancel the heartbeat. */
