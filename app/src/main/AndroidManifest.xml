@@ -44,6 +44,12 @@
             android:exported="false"
             android:label="Debug" />
 
+        <activity
+            android:name=".OnboardingActivity"
+            android:exported="false"
+            android:label="Setup"
+            android:theme="@style/Theme.Material3.DayNight.NoActionBar" />
+
         <service
             android:name=".ExitDetectionService"
             android:exported="false"

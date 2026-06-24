@@ -48,7 +48,7 @@ kotlin {
 
 android {
     namespace = "com.findmycar.shared"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 26

@@ -3,47 +3,104 @@ package com.findmycar.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
+import android.widget.ImageView
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.google.android.material.button.MaterialButton
+import com.findmycar.shared.LatLng
+import com.findmycar.shared.NavigationEngine
+import com.findmycar.shared.PathAccumulator
+import com.findmycar.shared.StepDeadReckoning
+import com.google.android.gms.location.*
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-class MainActivity : AppCompatActivity() {
+/**
+ * Single-screen app:
+ * - Shows "Not Parked" when driving / INIT / UNKNOWN
+ * - Shows navigation arrow + distance + floor when car is parked (EXITED state)
+ *
+ * In DEV mode: bottom nav with Debug tab is visible
+ * In PROD mode: single screen, no navigation
+ */
+class MainActivity : AppCompatActivity(), SensorEventListener {
 
+    // UI - common
+    private lateinit var notParkedView: View
+    private lateinit var navView: View
+    private lateinit var bottomNav: BottomNavigationView
+
+    // UI - not parked
+    private lateinit var notParkedEmoji: TextView
+    private lateinit var notParkedText: TextView
+    private lateinit var stateInfoText: TextView
+
+    // UI - navigation
+    private lateinit var arrowView: ImageView
+    private lateinit var distanceText: TextView
+    private lateinit var accuracyText: TextView
+    private lateinit var statusText: TextView
+    private lateinit var floorText: TextView
     private lateinit var parkInfoText: TextView
-    private lateinit var findButton: MaterialButton
-    private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
+    // Navigation engine
+    private val navEngine = NavigationEngine()
+    private val stepDR = StepDeadReckoning()
+    private val pathAccumulator = PathAccumulator()
+    private var deviceHeadingDeg = 0f
+    private var currentGps: LatLng? = null
+    private var lastGpsLatLng: LatLng? = null
+    private var parkingGps: LatLng? = null
+    private var lastGpsTimeMs = 0L
+
+    // Sensors
+    private lateinit var sensorManager: SensorManager
+    private lateinit var fusedClient: FusedLocationProviderClient
+
+    // Missing permissions UI
+    private lateinit var missingPermissionsView: View
+    private lateinit var permLocationFine: TextView
+    private lateinit var permSteps: TextView
+    private lateinit var permLocationBg: TextView
+    private lateinit var permBattery: TextView
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Permission re-request launchers
+    private val reqLocationFine = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            ExitDetectionService.start(this)
-            requestBackgroundLocation()
-        }
+        if (granted) startServiceAndGps()
+        checkMissingPermissions()
     }
 
-    private val requestBackgroundLocationLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    private val reqSteps = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { _ -> checkMissingPermissions() }
 
-    private val requestActivityRecognition = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    private val reqLocationBg = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { _ -> checkMissingPermissions() }
 
-    private fun requestBackgroundLocation() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-                requestBackgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            val loc = result.lastLocation ?: return
+            currentGps = LatLng(loc.latitude, loc.longitude)
+            lastGpsLatLng = currentGps
+            lastGpsTimeMs = System.currentTimeMillis()
+            if (pathAccumulator.isActive) {
+                pathAccumulator.stopAndEmit()
             }
         }
     }
@@ -65,133 +122,311 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
 
-        parkInfoText = findViewById(R.id.parkInfoText)
-        findButton = findViewById(R.id.findButton)
-
-        findButton.setOnClickListener {
-            startActivity(Intent(this, FindMyCarActivity::class.java))
+        // Check if onboarding needed
+        val onboardingComplete = getSharedPreferences("app_prefs", MODE_PRIVATE)
+            .getBoolean("onboarding_complete", false)
+        if (!onboardingComplete) {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+            finish()
+            return
         }
 
-        // Bottom navigation
-        val bottomNav = findViewById<com.google.android.material.bottomnavigation.BottomNavigationView>(R.id.bottomNav)
-        bottomNav.selectedItemId = R.id.nav_home
-        bottomNav.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_home -> true  // already here
-                R.id.nav_find -> {
-                    startActivity(Intent(this, FindMyCarActivity::class.java))
-                    false
-                }
-                R.id.nav_debug -> {
-                    startActivity(Intent(this, DebugActivity::class.java))
-                    false
-                }
-                else -> false
+        // Bind views
+        notParkedView = findViewById(R.id.notParkedView)
+        navView = findViewById(R.id.navView)
+        bottomNav = findViewById(R.id.bottomNav)
+        notParkedEmoji = findViewById(R.id.notParkedEmoji)
+        notParkedText = findViewById(R.id.notParkedText)
+        stateInfoText = findViewById(R.id.stateInfoText)
+        arrowView = findViewById(R.id.navArrow)
+        distanceText = findViewById(R.id.navDistance)
+        accuracyText = findViewById(R.id.navAccuracy)
+        statusText = findViewById(R.id.navStatus)
+        floorText = findViewById(R.id.floorText)
+        parkInfoText = findViewById(R.id.parkInfoText)
+
+        // Missing permissions
+        missingPermissionsView = findViewById(R.id.missingPermissionsView)
+        permLocationFine = findViewById(R.id.permLocationFine)
+        permSteps = findViewById(R.id.permSteps)
+        permLocationBg = findViewById(R.id.permLocationBg)
+        permBattery = findViewById(R.id.permBattery)
+
+        permLocationFine.setOnClickListener {
+            reqLocationFine.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        permSteps.setOnClickListener {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                reqSteps.launch(Manifest.permission.ACTIVITY_RECOGNITION)
             }
         }
-
-        // Permissions + service start
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            == PackageManager.PERMISSION_GRANTED) {
-            ExitDetectionService.start(this)
-            requestBackgroundLocation()
-        } else {
-            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        permLocationBg.setOnClickListener {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                reqLocationBg.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
         }
-
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
-            != PackageManager.PERMISSION_GRANTED) {
-            requestActivityRecognition.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-        }
-
-        // Battery optimization exemption
-        val pm = getSystemService(android.os.PowerManager::class.java)
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+        permBattery.setOnClickListener {
             try {
                 val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                 intent.data = android.net.Uri.parse("package:$packageName")
                 startActivity(intent)
             } catch (_: Exception) {}
         }
+
+        sensorManager = getSystemService(SensorManager::class.java)
+        fusedClient = LocationServices.getFusedLocationProviderClient(this)
+
+        // DEV/PROD mode
+        if (BuildConfig.APP_ENV == "PROD") {
+            bottomNav.visibility = View.GONE
+        } else {
+            bottomNav.selectedItemId = R.id.nav_home
+            bottomNav.setOnItemSelectedListener { item ->
+                when (item.itemId) {
+                    R.id.nav_home -> true
+                    R.id.nav_debug -> {
+                        startActivity(Intent(this, DebugActivity::class.java))
+                        false
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        // Start service if location permission is granted (onboarding handles the request)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED) {
+            startServiceAndGps()
+        }
+
         ServiceHeartbeat.schedule(this)
+    }
+
+    private fun startServiceAndGps() {
+        ExitDetectionService.start(this)
+        startGps()
+        startCompass()
+    }
+
+    private fun startGps() {
+        try {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L).build()
+            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+        } catch (_: SecurityException) {}
+    }
+
+    private fun startCompass() {
+        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        }
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        refreshHandler.post(refreshRunnable)
+        checkMissingPermissions()
+        handler.post(refreshRunnable)
     }
 
     override fun onPause() {
         super.onPause()
-        refreshHandler.removeCallbacks(refreshRunnable)
+        handler.removeCallbacks(refreshRunnable)
     }
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
             updateDisplay()
-            refreshHandler.postDelayed(this, 2000L)
+            handler.postDelayed(this, 1000L)
         }
     }
 
+    private fun checkMissingPermissions() {
+        var anyMissing = false
+
+        // Fine location
+        val hasLocation = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        permLocationFine.visibility = if (!hasLocation) { anyMissing = true; View.VISIBLE } else View.GONE
+
+        // Activity recognition (steps)
+        val hasSteps = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
+        permSteps.visibility = if (!hasSteps) { anyMissing = true; View.VISIBLE } else View.GONE
+
+        // Background location
+        val hasBgLocation = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+        permLocationBg.visibility = if (!hasBgLocation) { anyMissing = true; View.VISIBLE } else View.GONE
+
+        // Battery optimization
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val hasBattery = pm.isIgnoringBatteryOptimizations(packageName)
+        permBattery.visibility = if (!hasBattery) { anyMissing = true; View.VISIBLE } else View.GONE
+
+        missingPermissionsView.visibility = if (anyMissing) View.VISIBLE else View.GONE
+    }
+
     private fun updateDisplay() {
-        val statePrefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
-        val state = statePrefs.getString("presence_state", "INIT") ?: "INIT"
-        val parkingPrefs = statePrefs  // parking data is stored in the same prefs
-        val parkingTimestamp = parkingPrefs.getLong("timestamp", 0L)
+        val prefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
+        val state = prefs.getString("presence_state", "INIT") ?: "INIT"
 
-        when (state) {
-            "EXITED" -> {
-                if (parkingTimestamp > 0) {
-                    val elapsed = System.currentTimeMillis() - parkingTimestamp
-                    val minutes = elapsed / 60_000
-                    val timeStr = if (minutes < 60) "Parked ${minutes} min ago"
-                    else {
-                        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(parkingTimestamp))
-                        "Parked at $time"
-                    }
+        if (state == "EXITED") {
+            showNavigation(prefs)
+        } else {
+            showNotParked(state)
+        }
+    }
 
-                    val hasFloor = parkingPrefs.getBoolean("has_floor", false)
-                    val parkingPressure = parkingPrefs.getFloat("parking_pressure", 0f)
-                    val currentPressure = statePrefs.getFloat("debug_pressure", 0f)
-                    val floorStr = if (hasFloor && parkingPressure > 0f && currentPressure > 0f) {
-                        val delta = parkingPressure - currentPressure
-                        val floorsBelow = (delta / 0.4f).roundToInt()
-                        com.findmycar.shared.formatFloorRelative(floorsBelow)
-                    } else null
+    private fun showNotParked(state: String) {
+        notParkedView.visibility = View.VISIBLE
+        navView.visibility = View.GONE
 
-                    parkInfoText.text = if (floorStr != null) "$timeStr\n$floorStr" else timeStr
-                    parkInfoText.visibility = View.VISIBLE
-                } else {
-                    parkInfoText.visibility = View.GONE
-                }
+        // Check critical permissions
+        val hasLocation = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasBgLocation = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasSteps = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
 
-                // Distance check
-                val parkLat = parkingPrefs.getFloat("latitude", 0f).toDouble()
-                val parkLng = parkingPrefs.getFloat("longitude", 0f).toDouble()
-                val hasGps = parkingPrefs.getBoolean("has_gps", false)
-                val gpsAvailable = statePrefs.getBoolean("debug_gps_available", false)
-                val currentLat = statePrefs.getFloat("debug_gps_lat", 0f).toDouble()
-                val currentLng = statePrefs.getFloat("debug_gps_lng", 0f).toDouble()
+        if (!hasLocation || !hasBgLocation || !hasSteps) {
+            notParkedEmoji.text = "🚫"
+            notParkedText.text = "Please Permit"
+            stateInfoText.text = "Tap the warnings below to grant permissions"
+            return
+        }
 
-                val distanceToCar = if (hasGps && gpsAvailable && parkLat != 0.0 && currentLat != 0.0) {
-                    com.findmycar.shared.LatLng(currentLat, currentLng)
-                        .distanceTo(com.findmycar.shared.LatLng(parkLat, parkLng))
-                } else Float.MAX_VALUE
+        notParkedEmoji.text = "🚗"
+        val label = when (state) {
+            "INIT" -> "Ready"
+            "IN_CAR" -> "In Car"
+            "UNKNOWN" -> "Waiting for drive..."
+            else -> "Not Parked"
+        }
+        notParkedText.text = label
+        stateInfoText.text = if (state == "IN_CAR") "Parking will be saved when you exit" else ""
+    }
 
-                if (distanceToCar > 10f) {
-                    findButton.isEnabled = true
-                    findButton.text = "FIND\nMY CAR"
-                } else {
-                    findButton.isEnabled = false
-                    findButton.text = "CAR IS\nNEARBY"
-                }
-            }
-            else -> {
-                parkInfoText.visibility = View.GONE
-                findButton.isEnabled = false
-                findButton.text = "NOT\nPARKED"
+    private fun showNavigation(prefs: android.content.SharedPreferences) {
+        notParkedView.visibility = View.GONE
+        navView.visibility = View.VISIBLE
+
+        // Load parking spot
+        val hasGps = prefs.getBoolean("has_gps", false)
+        if (hasGps) {
+            val lat = prefs.getFloat("latitude", 0f).toDouble()
+            val lng = prefs.getFloat("longitude", 0f).toDouble()
+            if (lat != 0.0 || lng != 0.0) {
+                parkingGps = LatLng(lat, lng)
             }
         }
+
+        // Floor
+        val hasFloor = prefs.getBoolean("has_floor", false)
+        if (hasFloor) {
+            val parkingPressure = prefs.getFloat("parking_pressure", 0f)
+            val currentPressure = prefs.getFloat("debug_pressure", 0f)
+            if (parkingPressure > 0f && currentPressure > 0f) {
+                val delta = parkingPressure - currentPressure
+                val floorsBelow = (delta / 0.4f).roundToInt()
+                val floorStr = com.findmycar.shared.formatFloorRelative(floorsBelow)
+                if (floorStr != null) {
+                    floorText.text = floorStr
+                    floorText.visibility = View.VISIBLE
+                } else {
+                    floorText.visibility = View.GONE
+                }
+            } else {
+                floorText.visibility = View.GONE
+            }
+        } else {
+            floorText.visibility = View.GONE
+        }
+
+        // Parking time
+        val parkingTimestamp = prefs.getLong("timestamp", 0L)
+        if (parkingTimestamp > 0) {
+            val elapsed = System.currentTimeMillis() - parkingTimestamp
+            val minutes = elapsed / 60_000
+            parkInfoText.text = if (minutes < 60) "Parked ${minutes} min ago"
+            else {
+                val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(parkingTimestamp))
+                "Parked at $time"
+            }
+        }
+
+        // Compute navigation
+        val accFromParking = if (pathAccumulator.isActive) pathAccumulator.currentTotal() else null
+        val accFromLastGps = if (pathAccumulator.isActive && lastGpsLatLng != null) pathAccumulator.currentTotal() else null
+
+        val result = navEngine.compute(
+            parkingGps = parkingGps,
+            currentGps = currentGps,
+            accumulatedFromParking = accFromParking,
+            accumulatedFromLastGps = accFromLastGps,
+            lastGpsBeforeLoss = lastGpsLatLng
+        )
+
+        if (result.arrived) {
+            statusText.text = "🎉 You're here!"
+            statusText.visibility = View.VISIBLE
+            distanceText.text = "0m"
+            return
+        }
+
+        statusText.visibility = View.GONE
+
+        // Rotate arrow
+        val rotation = result.bearingToCarDeg - deviceHeadingDeg
+        arrowView.rotation = rotation
+
+        // Distance
+        val dist = result.distanceMeters.roundToInt()
+        distanceText.text = if (dist >= 1000) "${"%.1f".format(dist / 1000f)}km" else "${dist}m"
+
+        accuracyText.text = if (result.isGpsBased) "GPS navigation" else "⚠️ Estimated"
+    }
+
+    // --- Sensor callbacks ---
+
+    override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_ROTATION_VECTOR -> {
+                val rotationMatrix = FloatArray(9)
+                val orientation = FloatArray(3)
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                SensorManager.getOrientation(rotationMatrix, orientation)
+                deviceHeadingDeg = ((Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0).toFloat()
+                stepDR.updateHeading(deviceHeadingDeg)
+            }
+            Sensor.TYPE_STEP_COUNTER -> {
+                val steps = event.values[0].toInt()
+                val gpsStale = (System.currentTimeMillis() - lastGpsTimeMs) > 15_000L
+                if (gpsStale) {
+                    if (!pathAccumulator.isActive) pathAccumulator.start()
+                    val displacement = stepDR.onStepCount(steps)
+                    if (displacement.magnitude > 0f) {
+                        pathAccumulator.addDisplacement(displacement)
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
+        if (::sensorManager.isInitialized) {
+            sensorManager.unregisterListener(this)
+        }
+        try { fusedClient.removeLocationUpdates(locationCallback) } catch (_: Exception) {}
     }
 }

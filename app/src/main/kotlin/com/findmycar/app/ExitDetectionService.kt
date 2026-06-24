@@ -38,6 +38,11 @@ class ExitDetectionService : Service() {
         const val ACTION_USER_CAR_EXIT = "com.findmycar.app.USER_CAR_EXIT"
 
         fun start(context: Context) {
+            // Don't start the foreground service without location permission — it will crash
+            if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return
+            }
             ContextCompat.startForegroundService(context, Intent(context, ExitDetectionService::class.java))
         }
     }

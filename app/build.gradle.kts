@@ -9,7 +9,7 @@ fun quoteForBuildConfig(value: String): String {
 
 android {
     namespace = "com.findmycar.app"
-    compileSdk = 34
+    compileSdk = 35
 
     buildFeatures {
         buildConfig = true
@@ -21,6 +21,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        // APP_ENV: "DEV" shows debug tab + bottom nav, "PROD" shows single screen
+        val appEnv = (project.findProperty("APP_ENV") as String?) ?: "DEV"
+        buildConfigField("String", "APP_ENV", "\"${quoteForBuildConfig(appEnv)}\"")
 
         val azureStorageAccount = (project.findProperty("AZURE_STORAGE_ACCOUNT") as String?) ?: ""
         val azureModelsContainer = (project.findProperty("AZURE_MODELS_CONTAINER") as String?) ?: ""
