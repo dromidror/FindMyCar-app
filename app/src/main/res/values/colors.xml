@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_secondary">#555555</color>
+    <color name="text_tertiary">#777777</color>
+    <color name="text_title">#444444</color>
+    <color name="text_version">#AAAAAA</color>
+    <color name="warning">#E65100</color>
+    <color name="background">#FAFAFA</color>
+    <color name="success">#2E7D32</color>
+</resources>

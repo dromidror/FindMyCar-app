@@ -3,9 +3,13 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-fun quoteForBuildConfig(value: String): String {
-    return value.replace("\\", "\\\\").replace("\"", "\\\"")
-}
+// Auto-version based on build timestamp: "yy.MMdd.HHmm" (e.g. "26.0626.1415")
+val autoVersionName: String = providers.exec {
+    commandLine("date", "+%y.%m%d.%H%M")
+}.standardOutput.asText.get().trim()
+
+// Seconds since epoch / 10 — fits in Int, always increasing
+val autoVersionCode: Int = (System.currentTimeMillis() / 10000).toInt()
 
 android {
     namespace = "com.findmycar.app"
@@ -19,22 +23,12 @@ android {
         applicationId = "com.findmycar.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = autoVersionCode
+        versionName = autoVersionName
 
         // APP_ENV: "DEV" shows debug tab + bottom nav, "PROD" shows single screen
         val appEnv = (project.findProperty("APP_ENV") as String?) ?: "DEV"
-        buildConfigField("String", "APP_ENV", "\"${quoteForBuildConfig(appEnv)}\"")
-
-        val azureStorageAccount = (project.findProperty("AZURE_STORAGE_ACCOUNT") as String?) ?: ""
-        val azureModelsContainer = (project.findProperty("AZURE_MODELS_CONTAINER") as String?) ?: ""
-        val tokenBrokerBaseUrl = (project.findProperty("TOKEN_BROKER_BASE_URL") as String?) ?: ""
-        val tokenBrokerApiKey = (project.findProperty("TOKEN_BROKER_API_KEY") as String?) ?: ""
-
-        buildConfigField("String", "AZURE_STORAGE_ACCOUNT", "\"${quoteForBuildConfig(azureStorageAccount)}\"")
-        buildConfigField("String", "AZURE_MODELS_CONTAINER", "\"${quoteForBuildConfig(azureModelsContainer)}\"")
-        buildConfigField("String", "TOKEN_BROKER_BASE_URL", "\"${quoteForBuildConfig(tokenBrokerBaseUrl)}\"")
-        buildConfigField("String", "TOKEN_BROKER_API_KEY", "\"${quoteForBuildConfig(tokenBrokerApiKey)}\"")
+        buildConfigField("String", "APP_ENV", "\"$appEnv\"")
     }
 
     buildTypes {

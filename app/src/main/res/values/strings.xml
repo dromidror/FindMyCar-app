@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Find My Car</string>
+    <string name="app_title">Find My Car</string>
+
+    <!-- Main screen states -->
+    <string name="state_not_parked">Not Parked</string>
+    <string name="state_initializing">Initializing…</string>
+    <string name="state_in_car">In Car</string>
+    <string name="state_waiting_drive">Waiting for drive…</string>
+    <string name="state_parking_saved">Parking will be saved when you exit</string>
+    <string name="state_please_permit">Please Permit</string>
+    <string name="state_tap_warnings">Tap the warnings below to grant permissions</string>
+
+    <!-- Navigation -->
+    <string name="nav_gps">GPS navigation</string>
+    <string name="nav_estimated">⚠️ Estimated</string>
+    <string name="nav_arrived">🎉 You\'re here!</string>
+    <string name="parked_min_ago">Parked %1$d min ago</string>
+    <string name="parked_at_time">Parked at %1$s</string>
+
+    <!-- Permissions -->
+    <string name="perm_location">⚠️ We need your location to save your parking spot</string>
+    <string name="perm_steps">⚠️ Step counter needed to detect when you leave the car</string>
+    <string name="perm_location_bg">⚠️ Location access all the time is needed to track parking</string>
+    <string name="perm_battery">⚠️ Allow background activity to ensure parking is recorded</string>
+
+    <!-- Onboarding -->
+    <string name="onboard_location_title">We need your location</string>
+    <string name="onboard_location_msg">To remember where you parked, we need access to your location.\n\nDon\'t worry — we only use it to save your parking spot.</string>
+    <string name="onboard_location_btn">Allow Location</string>
+
+    <string name="onboard_steps_title">Count your steps</string>
+    <string name="onboard_steps_msg">We use the step counter to know when you\'ve walked away from your car.\n\nThis helps us save the exact parking spot at the right moment.</string>
+    <string name="onboard_steps_btn">Allow</string>
+
+    <string name="onboard_bg_title">Location access all the time</string>
+    <string name="onboard_bg_msg">To detect when you leave your car, the app needs location access all the time — even when the screen is off.\n\nPlease select \"Allow all the time\" on the next screen.</string>
+    <string name="onboard_bg_btn">Continue</string>
+
+    <string name="onboard_battery_title">Almost no battery usage</string>
+    <string name="onboard_battery_msg">This app uses almost no battery.\n\nTo ensure your parking place is recorded, please allow the following request.</string>
+    <string name="onboard_battery_btn">Allow</string>
+
+    <!-- Debug -->
+    <string name="debug_title">Debug</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_debug">Debug</string>
+</resources>

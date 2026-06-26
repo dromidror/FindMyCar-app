@@ -21,9 +21,6 @@ import com.findmycar.shared.PathAccumulator
 import com.findmycar.shared.StepDeadReckoning
 import com.google.android.gms.location.*
 import com.google.android.material.bottomnavigation.BottomNavigationView
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -176,6 +173,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         sensorManager = getSystemService(SensorManager::class.java)
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
 
+        // Version
+        findViewById<TextView>(R.id.versionText).text = "v${BuildConfig.VERSION_NAME}"
+
         // DEV/PROD mode
         if (BuildConfig.APP_ENV == "PROD") {
             bottomNav.visibility = View.GONE
@@ -297,20 +297,20 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         if (!hasLocation || !hasBgLocation || !hasSteps) {
             notParkedEmoji.text = "🚫"
-            notParkedText.text = "Please Permit"
-            stateInfoText.text = "Tap the warnings below to grant permissions"
+            notParkedText.text = getString(R.string.state_please_permit)
+            stateInfoText.text = getString(R.string.state_tap_warnings)
             return
         }
 
         notParkedEmoji.text = "🚗"
         val label = when (state) {
-            "INIT" -> "Ready"
-            "IN_CAR" -> "In Car"
-            "UNKNOWN" -> "Waiting for drive..."
-            else -> "Not Parked"
+            "INIT" -> getString(R.string.state_initializing)
+            "IN_CAR" -> getString(R.string.state_in_car)
+            "UNKNOWN" -> getString(R.string.state_waiting_drive)
+            else -> getString(R.string.state_not_parked)
         }
         notParkedText.text = label
-        stateInfoText.text = if (state == "IN_CAR") "Parking will be saved when you exit" else ""
+        stateInfoText.text = if (state == "IN_CAR") getString(R.string.state_parking_saved) else ""
     }
 
     private fun showNavigation(prefs: android.content.SharedPreferences) {
@@ -354,29 +354,36 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (parkingTimestamp > 0) {
             val elapsed = System.currentTimeMillis() - parkingTimestamp
             val minutes = elapsed / 60_000
-            parkInfoText.text = if (minutes < 60) "Parked ${minutes} min ago"
+            parkInfoText.text = if (minutes < 60) getString(R.string.parked_min_ago, minutes.toInt())
             else {
-                val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(parkingTimestamp))
-                "Parked at $time"
+                val time = LocaleHelper.formatTime(parkingTimestamp)
+                getString(R.string.parked_at_time, time)
             }
         }
 
         // Compute navigation
+        // Use activity's GPS if available, otherwise fall back to service's last known position
+        val effectiveGps = currentGps ?: run {
+            val lat = prefs.getFloat("debug_gps_lat", 0f).toDouble()
+            val lng = prefs.getFloat("debug_gps_lng", 0f).toDouble()
+            if (lat != 0.0 || lng != 0.0) LatLng(lat, lng) else null
+        }
+
         val accFromParking = if (pathAccumulator.isActive) pathAccumulator.currentTotal() else null
         val accFromLastGps = if (pathAccumulator.isActive && lastGpsLatLng != null) pathAccumulator.currentTotal() else null
 
         val result = navEngine.compute(
             parkingGps = parkingGps,
-            currentGps = currentGps,
+            currentGps = effectiveGps,
             accumulatedFromParking = accFromParking,
             accumulatedFromLastGps = accFromLastGps,
-            lastGpsBeforeLoss = lastGpsLatLng
+            lastGpsBeforeLoss = lastGpsLatLng ?: effectiveGps
         )
 
         if (result.arrived) {
-            statusText.text = "🎉 You're here!"
+            statusText.text = getString(R.string.nav_arrived)
             statusText.visibility = View.VISIBLE
-            distanceText.text = "0m"
+            distanceText.text = LocaleHelper.formatDistance(0f)
             return
         }
 
@@ -387,10 +394,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         arrowView.rotation = rotation
 
         // Distance
-        val dist = result.distanceMeters.roundToInt()
-        distanceText.text = if (dist >= 1000) "${"%.1f".format(dist / 1000f)}km" else "${dist}m"
+        distanceText.text = LocaleHelper.formatDistance(result.distanceMeters)
 
-        accuracyText.text = if (result.isGpsBased) "GPS navigation" else "⚠️ Estimated"
+        accuracyText.text = if (result.isGpsBased) getString(R.string.nav_gps) else getString(R.string.nav_estimated)
     }
 
     // --- Sensor callbacks ---

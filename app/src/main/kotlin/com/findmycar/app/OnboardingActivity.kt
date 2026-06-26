@@ -31,27 +31,27 @@ class OnboardingActivity : AppCompatActivity() {
     private val steps = listOf(
         OnboardingStep(
             emoji = "📍",
-            title = "We need your location",
-            message = "To remember where you parked, we need access to your location.\n\nDon't worry — we only use it to save your parking spot.",
-            buttonText = "Allow Location"
+            titleRes = R.string.onboard_location_title,
+            messageRes = R.string.onboard_location_msg,
+            buttonRes = R.string.onboard_location_btn
         ),
         OnboardingStep(
             emoji = "🚶",
-            title = "Count your steps",
-            message = "We use the step counter to know when you've walked away from your car.\n\nThis helps us save the exact parking spot at the right moment.",
-            buttonText = "Allow"
+            titleRes = R.string.onboard_steps_title,
+            messageRes = R.string.onboard_steps_msg,
+            buttonRes = R.string.onboard_steps_btn
         ),
         OnboardingStep(
             emoji = "🔄",
-            title = "Location access all the time",
-            message = "To detect when you leave your car, the app needs location access all the time — even when the screen is off.\n\nPlease select \"Allow all the time\" on the next screen.",
-            buttonText = "Continue"
+            titleRes = R.string.onboard_bg_title,
+            messageRes = R.string.onboard_bg_msg,
+            buttonRes = R.string.onboard_bg_btn
         ),
         OnboardingStep(
             emoji = "🔋",
-            title = "Almost no battery usage",
-            message = "This app uses almost no battery.\n\nTo ensure your parking place is recorded, please allow the following request.",
-            buttonText = "Allow"
+            titleRes = R.string.onboard_battery_title,
+            messageRes = R.string.onboard_battery_msg,
+            buttonRes = R.string.onboard_battery_btn
         )
     )
 
@@ -135,9 +135,9 @@ class OnboardingActivity : AppCompatActivity() {
         }
         val s = steps[step]
         emoji.text = s.emoji
-        title.text = s.title
-        message.text = s.message
-        nextButton.text = s.buttonText
+        title.text = getString(s.titleRes)
+        message.text = getString(s.messageRes)
+        nextButton.text = getString(s.buttonRes)
     }
 
     private fun onNextClicked() {
@@ -195,8 +195,8 @@ class OnboardingActivity : AppCompatActivity() {
 
     private data class OnboardingStep(
         val emoji: String,
-        val title: String,
-        val message: String,
-        val buttonText: String
+        val titleRes: Int,
+        val messageRes: Int,
+        val buttonRes: Int
     )
 }

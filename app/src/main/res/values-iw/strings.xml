@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">מצא את הרכב</string>
+    <string name="app_title">מצא את הרכב</string>
+
+    <!-- Main screen states -->
+    <string name="state_not_parked">לא חונה</string>
+    <string name="state_initializing">מוכן...</string>
+    <string name="state_in_car">ברכב</string>
+    <string name="state_waiting_drive">ממתין לנסיעה…</string>
+    <string name="state_parking_saved">מיקום החנייה יישמר כשתצא מהרכב</string>
+    <string name="state_please_permit">נא לאשר הרשאות</string>
+    <string name="state_tap_warnings">לחץ על האזהרות למטה לאישור</string>
+
+    <!-- Navigation -->
+    <string name="nav_gps">ניווט GPS</string>
+    <string name="nav_estimated">⚠️ הערכה</string>
+    <string name="nav_arrived">🎉 הגעת!</string>
+    <string name="parked_min_ago">חנה לפני %1$d דקות</string>
+    <string name="parked_at_time">חנה ב-%1$s</string>
+
+    <!-- Permissions -->
+    <string name="perm_location">⚠️ נדרשת גישה למיקום לשמירת מקום החנייה</string>
+    <string name="perm_steps">⚠️ מונה צעדים נדרש לזיהוי יציאה מהרכב</string>
+    <string name="perm_location_bg">⚠️ נדרשת גישה למיקום כל הזמן למעקב חנייה</string>
+    <string name="perm_battery">⚠️ אשר פעילות ברקע להבטחת שמירת החנייה</string>
+
+    <!-- Onboarding -->
+    <string name="onboard_location_title">אנחנו צריכים את המיקום שלך</string>
+    <string name="onboard_location_msg">כדי לזכור איפה חנית, אנחנו צריכים גישה למיקום.\n\nאל דאגה — אנחנו משתמשים בזה רק לשמירת מקום החנייה.</string>
+    <string name="onboard_location_btn">אשר מיקום</string>
+
+    <string name="onboard_steps_title">ספירת צעדים</string>
+    <string name="onboard_steps_msg">אנחנו משתמשים במונה הצעדים כדי לדעת מתי הלכת מהרכב.\n\nזה עוזר לנו לשמור את מקום החנייה ברגע הנכון.</string>
+    <string name="onboard_steps_btn">אשר</string>
+
+    <string name="onboard_bg_title">גישה למיקום כל הזמן</string>
+    <string name="onboard_bg_msg">כדי לזהות מתי אתה עוזב את הרכב, האפליקציה צריכה גישה למיקום כל הזמן.\n\nאנא בחר \"אפשר כל הזמן\" במסך הבא.</string>
+    <string name="onboard_bg_btn">המשך</string>
+
+    <string name="onboard_battery_title">כמעט ללא שימוש בסוללה</string>
+    <string name="onboard_battery_msg">האפליקציה כמעט לא משתמשת בסוללה.\n\nכדי להבטיח שמיקום החנייה נשמר, אנא אשר את הבקשה הבאה.</string>
+    <string name="onboard_battery_btn">אשר</string>
+
+    <!-- Debug -->
+    <string name="debug_title">ניפוי</string>
+    <string name="nav_home">בית</string>
+    <string name="nav_debug">ניפוי</string>
+</resources>
