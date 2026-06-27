@@ -67,6 +67,7 @@ class ExitDetectionService : Service() {
             persistence = AndroidPersistenceProvider(prefs),
             notification = notificationProvider
         )
+        engine.debugMode = (BuildConfig.APP_ENV == "DEV")
 
         // Start foreground
         startForeground(NOTIFICATION_ID, notificationProvider.buildNotification("Initializing..."))

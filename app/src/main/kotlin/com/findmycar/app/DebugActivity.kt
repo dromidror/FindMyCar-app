@@ -1,6 +1,5 @@
 package com.findmycar.app
 
-import android.content.Intent
 import android.os.Bundle
 import android.widget.ScrollView
 import android.widget.TextView
@@ -16,8 +15,6 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var smLogText: TextView
     private lateinit var smLogScrollView: ScrollView
     private lateinit var smToggleButton: MaterialButton
-    private lateinit var testLogButton: MaterialButton
-    private var logging = false
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var lastLogSize = 0
 
@@ -29,13 +26,11 @@ class DebugActivity : AppCompatActivity() {
         smLogText = findViewById(R.id.smLogText)
         smLogScrollView = findViewById(R.id.smLogScrollView)
         smToggleButton = findViewById(R.id.smToggleButton)
-        testLogButton = findViewById(R.id.testLogButton)
 
         smToggleButton.setOnClickListener { toggleSmLog() }
-        testLogButton.setOnClickListener { toggleLogging() }
-        findViewById<MaterialButton>(R.id.carExitButton).setOnClickListener { markCarExit() }
-        findViewById<MaterialButton>(R.id.clearLogsButton).setOnClickListener { clearLogs() }
         findViewById<MaterialButton>(R.id.resetStateButton).setOnClickListener { resetAllState() }
+        findViewById<MaterialButton>(R.id.exportTransitionsButton).setOnClickListener { exportTransitionLog() }
+        findViewById<MaterialButton>(R.id.deleteAllDebugButton).setOnClickListener { deleteAllDebugFiles() }
         findViewById<MaterialButton>(R.id.smSaveButton).setOnClickListener { saveSmLog() }
         findViewById<MaterialButton>(R.id.smCleanButton).setOnClickListener { cleanSmConsole() }
     }
@@ -85,7 +80,7 @@ class DebugActivity : AppCompatActivity() {
 
     private fun updateStateMachineLog() {
         val currentSize = StateMachineLog.size()
-        if (currentSize == lastLogSize) return  // No new entries
+        if (currentSize == lastLogSize) return
         lastLogSize = currentSize
 
         val entries = StateMachineLog.getAll()
@@ -106,19 +101,7 @@ class DebugActivity : AppCompatActivity() {
             sb.appendLine("$state $src $cnt $motion $steps $pickup $time $trans")
         }
         smLogText.text = sb.toString()
-
-        // Auto-scroll to bottom
         smLogScrollView.post { smLogScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
-    }
-
-    private fun toggleLogging() {
-        logging = !logging
-        val intent = Intent(ExitDetectionService.ACTION_TOGGLE_LOGGING).apply {
-            setPackage(packageName)
-            putExtra("enabled", logging)
-        }
-        sendBroadcast(intent)
-        testLogButton.text = if (logging) "Stop Log" else "Start Log"
     }
 
     private fun toggleSmLog() {
@@ -130,24 +113,6 @@ class DebugActivity : AppCompatActivity() {
             smToggleButton.text = "▶ Start"
             smToggleButton.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF4CAF50.toInt())
         }
-    }
-
-    private fun markCarExit() {
-        val intent = Intent(ExitDetectionService.ACTION_USER_CAR_EXIT).apply {
-            setPackage(packageName)
-        }
-        sendBroadcast(intent)
-        Toast.makeText(this, "Car Exit marked ✓", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun clearLogs() {
-        val logDir = File(getExternalFilesDir(null) ?: filesDir, "test_logs")
-        var count = 0
-        logDir.listFiles()?.forEach { it.delete(); count++ }
-        StateMachineLog.clear()
-        lastLogSize = 0
-        smLogText.text = ""
-        Toast.makeText(this, "Cleared $count log file(s) + SM log", Toast.LENGTH_SHORT).show()
     }
 
     private fun saveSmLog() {
@@ -191,5 +156,47 @@ class DebugActivity : AppCompatActivity() {
         getSharedPreferences("exit_detection_state", MODE_PRIVATE).edit().clear().apply()
         getSharedPreferences("parking_spot", MODE_PRIVATE).edit().clear().apply()
         Toast.makeText(this, "State & parking data cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun exportTransitionLog() {
+        val prefs = getSharedPreferences("exit_detection_state", MODE_PRIVATE)
+        val log = prefs.getString("transition_log", "") ?: ""
+        if (log.isBlank()) {
+            Toast.makeText(this, "No transitions logged", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val logDir = File(getExternalFilesDir(null) ?: filesDir, "sm_logs")
+        logDir.mkdirs()
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val file = File(logDir, "transitions_$timestamp.csv")
+
+        file.bufferedWriter().use { writer ->
+            writer.appendLine("timestamp,from,to,motion_state,motion_duration_ms,cumulative_moving_ms,steps_since_stop,steps_during_slow,time_since_stop_ms,pickup,steps_since_pickup,bt_connected,gps_available,gps_speed,lat,lng")
+            log.split(";").filter { it.isNotBlank() }.forEach { entry ->
+                writer.appendLine(entry)
+            }
+        }
+
+        val count = log.split(";").count { it.isNotBlank() }
+        Toast.makeText(this, "Exported $count transitions → ${file.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun deleteAllDebugFiles() {
+        var count = 0
+        val baseDir = getExternalFilesDir(null) ?: filesDir
+
+        val smLogDir = File(baseDir, "sm_logs")
+        smLogDir.listFiles()?.forEach { it.delete(); count++ }
+
+        val testLogDir = File(baseDir, "test_logs")
+        testLogDir.listFiles()?.forEach { it.delete(); count++ }
+
+        getSharedPreferences("exit_detection_state", MODE_PRIVATE).edit()
+            .remove("transition_log")
+            .apply()
+
+        Toast.makeText(this, "Deleted $count file(s) + transition log", Toast.LENGTH_SHORT).show()
     }
 }

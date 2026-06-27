@@ -17,6 +17,9 @@ class ExitDetectionEngine(
     private val persistence: PersistenceProvider,
     private val notification: NotificationProvider
 ) {
+    /** Set to true to enable debug logging (StateMachineLog + transition log). */
+    var debugMode = false
+
     val stateMachine = CarPresenceStateMachine()
     val floorDetector = FloorDetector()
     val pathAccumulator = PathAccumulator()
@@ -50,7 +53,7 @@ class ExitDetectionEngine(
     companion object {
         private const val GPS_STALE_MS = 15_000L
         private const val SPEED_STOPPED_THRESHOLD_KMH = 1.0f
-        private const val SPEED_DRIVING_THRESHOLD_KMH = 10.0f  // minimum speed to count as driving (not walking)
+        private const val SPEED_DRIVING_THRESHOLD_KMH = 15.0f  // minimum speed to count as driving (filters GPS drift)
         private const val INFERENCE_INTERVAL_MS = 5000L
         private const val GPS_INTERVAL_EXITED_MS = 10_000L  // 10s — must detect driving to re-enter car
     }
@@ -119,10 +122,11 @@ class ExitDetectionEngine(
     fun tick() {
         val now = currentTimeMs()
 
-        // Accumulate driving time for INIT→IN_CAR transition — only at real driving speed
+        // Accumulate driving time for INIT→IN_CAR transition — only at real driving speed + good accuracy
         if (currentMotionState == "CAR_MOVING") {
             val speed = location.getSpeedKmh() ?: 0f
-            if (speed >= SPEED_DRIVING_THRESHOLD_KMH) {
+            val accuracy = location.getAccuracy() ?: 999f
+            if (speed >= SPEED_DRIVING_THRESHOLD_KMH && accuracy < 30f) {
                 cumulativeMovingMs += (now - lastTickMs)
             }
         }
@@ -275,27 +279,78 @@ class ExitDetectionEngine(
         val oldState = stateMachine.state
         val newState = stateMachine.evaluate(input)
 
-        // Log to state machine debug console
-        val source = determineEventSource()
-        val counter = determineCounter(source)
-        val timeInState = formatDuration(now - motionStateStartMs)
-        val transition = if (newState != oldState) newState.name else null
+        // Log to state machine debug console (DEV only)
+        if (debugMode) {
+            val source = determineEventSource()
+            val counter = determineCounter(source)
+            val timeInState = formatDuration(now - motionStateStartMs)
+            val transition = if (newState != oldState) newState.name else null
 
-        StateMachineLog.add(StateMachineLog.Entry(
-            state = oldState.name,
-            source = source,
-            counter = counter,
-            motionState = currentMotionState,
-            steps = stepsSinceStop,
-            pickup = if (oldState == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED")
-                pickupDetected else null,
-            timeInState = timeInState,
-            transition = transition
-        ))
+            StateMachineLog.add(StateMachineLog.Entry(
+                state = oldState.name,
+                source = source,
+                counter = counter,
+                motionState = currentMotionState,
+                steps = stepsSinceStop,
+                pickup = if (oldState == CarPresenceState.IN_CAR && currentMotionState == "CAR_STOPPED")
+                    pickupDetected else null,
+                timeInState = timeInState,
+                transition = transition
+            ))
+        }
 
         if (newState != oldState) {
+            // Always-on transition log for debugging phantom state changes (DEV only)
+            if (debugMode) {
+                logTransition(oldState, newState, input, now)
+            }
             onStateTransition(StateTransition(oldState, newState))
         }
+    }
+
+    /**
+     * Logs every state transition with full context to persistence.
+     * Runs always (independent of debug console toggle).
+     * Appends to a semicolon-delimited log string in SharedPreferences.
+     */
+    private fun logTransition(
+        from: CarPresenceState,
+        to: CarPresenceState,
+        input: StateMachineInput,
+        timestampMs: Long
+    ) {
+        val gpsLat = location.getLastLocation()?.lat ?: 0.0
+        val gpsLng = location.getLastLocation()?.lng ?: 0.0
+        val gpsSpeed = location.getSpeedKmh() ?: -1f
+        val gpsAvailable = location.isAvailable()
+
+        val entry = buildString {
+            append(timestampMs)
+            append(",").append(from.name)
+            append(",").append(to.name)
+            append(",").append(input.motionState)
+            append(",").append(input.motionStateDurationMs)
+            append(",").append(input.cumulativeMovingMs)
+            append(",").append(input.stepsSinceStop)
+            append(",").append(input.stepsDuringSlowMotion)
+            append(",").append(input.timeSinceStopMs)
+            append(",").append(input.pickupDetected)
+            append(",").append(input.stepsSincePickup)
+            append(",").append(input.carBluetoothConnected)
+            append(",").append(gpsAvailable)
+            append(",").append(gpsSpeed)
+            append(",").append(gpsLat)
+            append(",").append(gpsLng)
+        }
+
+        // Append to existing log (keep last 50 transitions)
+        val existing = persistence.getString("transition_log", "") ?: ""
+        val entries = existing.split(";").filter { it.isNotBlank() }.toMutableList()
+        entries.add(entry)
+        if (entries.size > 50) {
+            entries.removeAt(0)
+        }
+        persistence.putString("transition_log", entries.joinToString(";"))
     }
 
     /**

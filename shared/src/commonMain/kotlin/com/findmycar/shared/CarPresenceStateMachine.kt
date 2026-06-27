@@ -29,7 +29,7 @@ data class StateMachineInput(
 /**
  * Creates the car presence state machine with all rules.
  */
-private const val INIT_DRIVING_THRESHOLD_MS = 120_000L      // 2 min cumulative driving to leave INIT
+private const val INIT_DRIVING_THRESHOLD_MS = 300_000L      // 5 min cumulative driving to leave INIT
 private const val UNKNOWN_DRIVING_THRESHOLD_MS = 10_000L    // 10s driving to re-enter IN_CAR
 private const val STOP_TIMEOUT_MS = 300_000L                // 5 min stopped = forced exit
 private const val EXIT_STEPS_THRESHOLD = 10                 // steps to confirm walking away
